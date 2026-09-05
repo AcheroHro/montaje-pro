@@ -2641,10 +2641,134 @@ class ModalManager {
             styleTag.id = 'dynamic-print-page-style';
             document.head.appendChild(styleTag);
         }
-        if (orientation === 'landscape') {
-            styleTag.textContent = `@media print { @page { size: landscape; margin: 6mm 8mm; } }`;
-        } else {
-            styleTag.textContent = `@media print { @page { size: portrait; margin: 8mm; } }`;
+        const pageSize = orientation === 'landscape' ? 'landscape' : 'portrait';
+        const pageMargin = orientation === 'landscape' ? '6mm 8mm' : '8mm';
+        styleTag.textContent = `@media print {
+            @page { size: ${pageSize}; margin: ${pageMargin}; }
+            body > *:not(#modal-root),
+            body > header,
+            body > section,
+            body > nav,
+            body > main,
+            body > footer,
+            body > aside,
+            header,
+            section,
+            nav,
+            main,
+            footer,
+            aside {
+                display: none !important;
+                visibility: hidden !important;
+                height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: hidden !important;
+            }
+        }`;
+    }
+
+    /**
+     * Devuelve el esquema cromático de alta legibilidad para impresión según la disciplina de la tarea,
+     * alineado con los colores de las tarjetas y barras visualizadas en la pantalla de la app.
+     */
+    getDisciplineStyle(disciplineId) {
+        const disciplines = this.store.getDisciplines();
+        const disc = (disciplines || []).find(d => d.id === disciplineId) || {};
+        const color = disc.color || (disciplineId === 'piping' ? 'blue' :
+                                    disciplineId === 'estructura' ? 'amber' :
+                                    disciplineId === 'equipos' ? 'purple' :
+                                    disciplineId === 'soldadura' ? 'orange' :
+                                    disciplineId === 'end' ? 'emerald' :
+                                    disciplineId === 'pruebas' ? 'cyan' : 'blue');
+
+        switch (color) {
+            case 'amber':
+            case 'yellow':
+                return {
+                    name: disc.name || 'Estructuras Metálicas',
+                    bgClass: 'bg-amber-500',
+                    borderClass: 'border-amber-700',
+                    textClass: 'text-slate-950 font-black',
+                    hex: '#f59e0b',
+                    borderHex: '#b45309',
+                    textHex: '#0f172a',
+                    tagBg: '#fef3c7',
+                    tagText: '#92400e',
+                    tagBorder: '#fcd34d'
+                };
+            case 'purple':
+            case 'indigo':
+            case 'violet':
+                return {
+                    name: disc.name || 'Montaje de Equipos',
+                    bgClass: 'bg-purple-600',
+                    borderClass: 'border-purple-800',
+                    textClass: 'text-white font-bold',
+                    hex: '#9333ea',
+                    borderHex: '#7e22ce',
+                    textHex: '#ffffff',
+                    tagBg: '#f3e8ff',
+                    tagText: '#6b21a8',
+                    tagBorder: '#d8b4fe'
+                };
+            case 'orange':
+            case 'red':
+                return {
+                    name: disc.name || 'Soldadura Especial',
+                    bgClass: 'bg-orange-600',
+                    borderClass: 'border-orange-800',
+                    textClass: 'text-white font-bold',
+                    hex: '#ea580c',
+                    borderHex: '#c2410c',
+                    textHex: '#ffffff',
+                    tagBg: '#ffedd5',
+                    tagText: '#9a3412',
+                    tagBorder: '#fdba74'
+                };
+            case 'emerald':
+            case 'green':
+            case 'teal':
+                return {
+                    name: disc.name || 'Ensayos No Destructivos (END)',
+                    bgClass: 'bg-emerald-600',
+                    borderClass: 'border-emerald-800',
+                    textClass: 'text-white font-bold',
+                    hex: '#059669',
+                    borderHex: '#047857',
+                    textHex: '#ffffff',
+                    tagBg: '#d1fae5',
+                    tagText: '#065f46',
+                    tagBorder: '#6ee7b7'
+                };
+            case 'cyan':
+                return {
+                    name: disc.name || 'Pruebas y Comisionado',
+                    bgClass: 'bg-cyan-600',
+                    borderClass: 'border-cyan-800',
+                    textClass: 'text-white font-bold',
+                    hex: '#0891b2',
+                    borderHex: '#0e7490',
+                    textHex: '#ffffff',
+                    tagBg: '#cffafe',
+                    tagText: '#155e75',
+                    tagBorder: '#67e8f9'
+                };
+            case 'blue':
+            case 'sky':
+            default:
+                return {
+                    name: disc.name || 'Cañería (Piping)',
+                    bgClass: 'bg-blue-600',
+                    borderClass: 'border-blue-800',
+                    textClass: 'text-white font-bold',
+                    hex: '#2563eb',
+                    borderHex: '#1d4ed8',
+                    textHex: '#ffffff',
+                    tagBg: '#dbeafe',
+                    tagText: '#1e40af',
+                    tagBorder: '#93c5fd'
+                };
         }
     }
 
@@ -5580,9 +5704,11 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
         const tasks = [...(p.tasks || [])];
         const daysMap = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        const disciplines = this.store.getDisciplines();
 
         // Construir filas de tareas y sus barras de Gantt
         const taskRowsHtml = tasks.map(task => {
+            const discStyle = this.getDisciplineStyle(task.discipline);
             const startDayStr = (reportType === 'real') 
                 ? (task.realStart || task.estimatedStart) 
                 : task.estimatedStart;
@@ -5609,7 +5735,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     <!-- Columna Izquierda: Información de Tarea -->
                     <div class="w-56 shrink-0 p-2 border-r-2 border-slate-300 flex flex-col justify-center bg-white">
                         <div class="flex items-center gap-1.5 truncate">
-                            <span class="text-[9px] font-mono px-1 py-0.2 rounded font-bold bg-slate-100 text-slate-800 border border-slate-300 shrink-0">
+                            <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold shrink-0 border"
+                                  style="background-color: ${discStyle.tagBg} !important; color: ${discStyle.tagText} !important; border-color: ${discStyle.tagBorder} !important;">
                                 ${task.tag || 'TSK'}
                             </span>
                             <span class="font-bold text-slate-900 truncate" title="${task.name}">
@@ -5617,7 +5744,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             </span>
                         </div>
                         <div class="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 font-mono">
-                            <span class="uppercase">${task.discipline}</span>
+                            <span class="uppercase font-bold" style="color: ${discStyle.borderHex} !important;">${discStyle.name.split(' ')[0]}</span>
                             <span>• ${task.durationDays}d</span>
                             ${reportType !== 'estimated' ? `<span class="font-bold ${task.progress >= 100 ? 'text-blue-600' : 'text-emerald-700'}">${task.progress || 0}%</span>` : ''}
                         </div>
@@ -5644,10 +5771,11 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                  style="left: ${leftPct}%; width: ${widthPct}%;">
                                 
                                 ${reportType === 'estimated' ? `
-                                    <!-- MODO ESTIMADO: BARRA PLANIFICADA -->
-                                    <div class="h-full rounded bg-blue-700 text-white border border-blue-900 shadow-sm flex items-center justify-between px-2 text-[10px] font-bold overflow-hidden">
-                                        <span class="truncate">${task.tag || ''} ${task.name}</span>
-                                        <span class="font-mono text-[9px] shrink-0 pl-1">${task.durationDays}d</span>
+                                    <!-- MODO ESTIMADO: BARRA PLANIFICADA CON COLOR DE DISCIPLINA EXACTO -->
+                                    <div class="h-full rounded ${discStyle.bgClass} ${discStyle.textClass} border ${discStyle.borderClass} shadow-sm flex items-center justify-between px-2 text-[10px] overflow-hidden"
+                                         style="background-color: ${discStyle.hex} !important; border-color: ${discStyle.borderHex} !important; color: ${discStyle.textHex} !important;">
+                                        <span class="truncate">${task.tag ? `${task.tag} ` : ''}${task.name}</span>
+                                        <span class="font-mono text-[9px] shrink-0 pl-1 font-black">${task.durationDays}d</span>
                                     </div>
                                 ` : (reportType === 'real' ? `
                                     <!-- MODO REAL O EN EJECUCIÓN: BARRA CON AVANCE REAL -->
@@ -5662,9 +5790,10 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                 ` : `
                                     <!-- MODO COMPARATIVA / CONTROL: DOBLE BARRA (PLAN VS REAL) -->
                                     <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm">
-                                        <!-- Barra Superior: Plan -->
-                                        <div class="h-[46%] rounded bg-slate-700 text-white flex items-center justify-between px-1.5 text-[8px] font-mono">
-                                            <span class="truncate">Plan: ${task.durationDays}d</span>
+                                        <!-- Barra Superior: Plan con color de disciplina -->
+                                        <div class="h-[46%] rounded ${discStyle.bgClass} text-white flex items-center justify-between px-1.5 text-[8px] font-mono shadow-xs"
+                                             style="background-color: ${discStyle.hex} !important; color: ${discStyle.textHex} !important;">
+                                            <span class="truncate font-semibold">Plan: ${task.durationDays}d</span>
                                             <span class="shrink-0 font-bold">${task.tag || ''}</span>
                                         </div>
                                         <!-- Barra Inferior: Real con Desvío -->
@@ -5780,9 +5909,19 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             <div class="flex items-center gap-3">
                                 <span class="font-bold text-slate-700">Referencias:</span>
                                 ${reportType === 'estimated' ? `
-                                    <span class="flex items-center gap-1">
-                                        <span class="w-3 h-2 rounded bg-blue-700 inline-block"></span> Barra Azul: Plazo estimado planificado
-                                    </span>
+                                    <div class="flex items-center flex-wrap gap-2.5">
+                                        <span class="font-bold text-slate-800">Disciplinas:</span>
+                                        ${disciplines.map(d => {
+                                            const st = this.getDisciplineStyle(d.id);
+                                            return `
+                                                <span class="flex items-center gap-1 font-medium text-slate-700">
+                                                    <span class="w-2.5 h-2.5 rounded inline-block shadow-xs border"
+                                                          style="background-color: ${st.hex} !important; border-color: ${st.borderHex} !important;"></span>
+                                                    ${d.name.split(' ')[0]}
+                                                </span>
+                                            `;
+                                        }).join('')}
+                                    </div>
                                 ` : (reportType === 'real' ? `
                                     <span class="flex items-center gap-1">
                                         <span class="w-3 h-2 rounded bg-emerald-600 inline-block"></span> Relleno Verde/Azul: Avance físico real (%)

@@ -102,16 +102,32 @@
         height: auto !important;
     }
 
-    /* Ocultar interfaz principal de la app y botones auxiliares */
+    /* Ocultar interfaz principal de la app, dashboard KPI, pestañas y botones auxiliares */
+    body > *:not(#modal-root),
+    body > header,
+    body > section,
+    body > nav,
+    body > main,
+    body > footer,
+    body > aside,
     header,
+    section,
+    nav,
     main,
     footer,
+    aside,
     #timeline-zoom-controls,
     .btn-close-modal,
     .btn-back-to-options,
+    .btn-trigger-print,
     .no-print,
     [class*="print:hidden"] {
         display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
     }
 
     #modal-root {
@@ -172,7 +188,7 @@
     .printable-content-area h3,
     .printable-content-area p,
     .printable-content-area strong,
-    .printable-content-area span:not([class*="text-white"]):not([class*="bg-"]) {
+    .printable-content-area span:not([class*="text-white"]):not([class*="bg-"]):not([style*="color"]) {
         color: #0f172a !important;
     }
 
