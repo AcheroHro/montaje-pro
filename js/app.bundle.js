@@ -726,8 +726,7 @@ class ProjectStore {
             filters: {
                 search: '',
                 discipline: 'all',
-                status: 'all',
-                showHeatmap: true
+                status: 'all'
             },
             selectedTaskId: null,
             catalogs: {
@@ -1845,12 +1844,6 @@ class TimelineRenderer {
             lanesHtml += laneHtml;
         });
 
-        // 3. Fila de carga de recursos (Resource Workload Heatmap)
-        let heatmapHtml = '';
-        if (this.store.state.filters.showHeatmap) {
-            heatmapHtml = this.renderResourceHeatmap(calendarDates, conflicts, totalTimelineWidth);
-        }
-
         this.container.innerHTML = `
             <div class="timeline-wrapper select-none overflow-x-auto overflow-y-visible custom-scrollbar relative pb-4" style="min-width: 100%;">
                 
@@ -1868,9 +1861,6 @@ class TimelineRenderer {
                         </div>
                     `}
                 </div>
-
-                <!-- Histograma / Heatmap de Recursos Diario -->
-                ${heatmapHtml}
 
             </div>
         `;
@@ -2081,68 +2071,6 @@ class TimelineRenderer {
                     <div class="text-xs text-slate-500 italic pl-4">No asignada al calendario</div>
                 `}
 
-            </div>
-        `;
-    }
-
-    /**
-     * Renderiza el Heatmap / Histograma de recursos diario
-     */
-    renderResourceHeatmap(calendarDates, conflicts, totalTimelineWidth) {
-        const daily = conflicts.dailyLoad || {};
-        const limits = this.store.getActiveProject().resourceLimits || {};
-        const totalWidth = totalTimelineWidth || (calendarDates.length * this.columnWidth);
-
-        // Recursos clave para vigilar
-        const keyResources = [
-            { id: 'soldador', label: 'Soldadores 6G', icon: 'flame', color: 'orange' },
-            { id: 'canista', label: 'Cañistas', icon: 'wrench', color: 'blue' },
-            { id: 'montador', label: 'Montadores', icon: 'hammer', color: 'amber' },
-            { id: 'grua_50t', label: 'Grúa 50T', icon: 'truck', color: 'purple' },
-            { id: 'hidroelevador', label: 'Manlift 16m', icon: 'navigation', color: 'emerald' }
-        ];
-
-        let rowsHtml = '';
-        keyResources.forEach(res => {
-            const limit = limits[res.id] || 4;
-
-            let cellsHtml = '';
-            calendarDates.forEach(dateStr => {
-                const dayUsage = (daily[dateStr] && daily[dateStr][res.id]) ? daily[dateStr][res.id].total : 0;
-                const isOverloaded = dayUsage > limit;
-
-                cellsHtml += `
-                    <div class="flex-shrink-0 flex items-center justify-center border-r border-slate-800 py-1.5 text-xs font-mono transition-colors ${isOverloaded ? 'bg-red-500/20 text-red-300 font-black ring-1 ring-inset ring-red-500/50' : (dayUsage > 0 ? 'text-slate-300' : 'text-slate-600')}"
-                         style="width: ${this.columnWidth}px;"
-                         title="${res.label} el ${dateStr}: ${dayUsage} asignados (Capacidad máx: ${limit})">
-                        ${dayUsage > 0 ? `${dayUsage}/${limit}` : '-'}
-                    </div>
-                `;
-            });
-
-            rowsHtml += `
-                <div class="border-b border-slate-800/80 hover:bg-slate-800/20 transition-colors" style="width: ${totalWidth}px;">
-                    <div class="px-3 py-1 bg-slate-900/95 sticky left-0 z-10 inline-flex items-center gap-2 text-xs text-slate-300 border-r border-b border-slate-700/60 rounded-br-lg">
-                        <span class="flex items-center gap-1.5 font-medium">
-                            <i data-lucide="${res.icon}" class="w-3.5 h-3.5 text-${res.color}-400"></i> ${res.label}
-                        </span>
-                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Máx: ${limit}</span>
-                    </div>
-                    <div class="flex">${cellsHtml}</div>
-                </div>
-            `;
-        });
-
-        return `
-            <div class="mt-6 pt-3 border-t-2 border-slate-700/80 bg-slate-900/80 rounded-xl overflow-hidden shadow-inner" style="width: ${totalWidth}px;">
-                <div class="p-3 bg-slate-900 flex items-center justify-between border-b border-slate-800 sticky left-0">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="bar-chart-3" class="w-4 h-4 text-amber-400"></i>
-                        <h4 class="text-xs font-bold text-slate-200 uppercase tracking-wider">Histograma de Carga y Capacidad Diaria de Recursos</h4>
-                    </div>
-                    <span class="text-[11px] text-slate-400">Valores en rojo indican sobreasignación / conflicto operativo</span>
-                </div>
-                ${rowsHtml}
             </div>
         `;
     }
@@ -4612,15 +4540,6 @@ class AppController {
         if (statusFilter) {
             statusFilter.addEventListener('change', (e) => {
                 this.store.setFilters({ status: e.target.value });
-            });
-        }
-
-        // Toggle Heatmap de Recursos
-        const toggleHeatmap = document.getElementById('btn-toggle-heatmap');
-        if (toggleHeatmap) {
-            toggleHeatmap.addEventListener('click', () => {
-                const current = this.store.state.filters.showHeatmap;
-                this.store.setFilters({ showHeatmap: !current });
             });
         }
 

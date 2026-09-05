@@ -63,7 +63,6 @@ Tienes 3 opciones sencillas para probar la aplicación de inmediato:
 * Detección automática en tiempo real de solapamientos que superan la dotación o maquinaria máxima disponible (ej.: requerimiento de 2 grúas de 50T cuando solo hay 1 disponible, o más soldadores que los contratados).
 * Indicadores visuales en el encabezado de fecha del cronograma con contador de sobreasignaciones.
 * Modal **Inspector de Conflictos** con opción de resolución con 1 clic ("Desplazar tarea +1 día").
-* Histograma de carga de recursos diario integrado al pie del cronograma.
 
 ### 5. Panel de Indicadores (Dashboard KPI)
 * Horas-Hombre totales estimadas vs. reales y cálculo de sobrecosto/ahorro.

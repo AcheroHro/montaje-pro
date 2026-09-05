@@ -148,15 +148,6 @@ class AppController {
             });
         }
 
-        // Toggle Heatmap de Recursos
-        const toggleHeatmap = document.getElementById('btn-toggle-heatmap');
-        if (toggleHeatmap) {
-            toggleHeatmap.addEventListener('click', () => {
-                const current = this.store.state.filters.showHeatmap;
-                this.store.setFilters({ showHeatmap: !current });
-            });
-        }
-
         // Botón Gestionar Catálogo (Mano de Obra, Equipos y Disciplinas)
         const btnCatalog = document.getElementById('btn-open-catalog');
         if (btnCatalog) {

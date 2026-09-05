@@ -19,8 +19,7 @@ class ProjectStore {
             filters: {
                 search: '',
                 discipline: 'all',
-                status: 'all',
-                showHeatmap: true
+                status: 'all'
             },
             selectedTaskId: null,
             catalogs: {
