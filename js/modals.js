@@ -1062,9 +1062,19 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         this.openCreateProjectWizard(1);
     }
 
-    openCreateProjectWizard(step = 1, tempProjectData = null) {
+    openCreateProjectWizard(step = 1, context = null) {
         if (step === 1) {
+            const tempProjectData = context?.tempProjectData || (context?.name !== undefined ? context : null);
             return this.openCatalogManagerModal('labor', { isWizard: true, step: 1, tempProjectData });
+        }
+
+        if (step === 3) {
+            return this.openTaskCreator({
+                isWizard: true,
+                step: 3,
+                createdProject: context?.createdProject || this.store.getActiveProject(),
+                tasksCreatedCount: context?.tasksCreatedCount || 0
+            });
         }
 
         // Paso 2: Parámetros contractuales y límites de capacidad diaria precargados del catálogo
@@ -1084,7 +1094,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             resourceLimits: {}
         };
 
-        const currentData = { ...defaultData, ...(tempProjectData || {}) };
+        const currentData = { ...defaultData, ...(context?.tempProjectData || (context?.name !== undefined ? context : {})) };
         currentData.resourceLimits = currentData.resourceLimits || {};
 
         const escapeAttr = (str) => (str === undefined || str === null ? '' : String(str).replace(/"/g, '&quot;'));
@@ -1102,7 +1112,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             <div>
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <h3 class="text-base sm:text-lg font-bold text-white">Alta de Nueva Obra / Proyecto de Montaje</h3>
-                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 2 de 2: Parámetros y Capacidad</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 2 de 3: Parámetros y Capacidad</span>
                                 </div>
                                 <p class="text-xs text-slate-400">Configura los parámetros contractuales y los límites diarios de recursos para control de sobreasignación</p>
                             </div>
@@ -1114,16 +1124,21 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
                     <!-- Stepper Bar -->
                     <div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between text-xs">
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
                             <button type="button" id="btn-wizard-back-step1" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer">
                                 <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-                                <span>Paso 1: Catálogo de Recursos</span>
+                                <span>Paso 1: Catálogo</span>
                                 <span class="text-[10px] underline ml-1 text-emerald-300">Modificar</span>
                             </button>
                             <span class="text-slate-600">➔</span>
                             <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
                                 <span class="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-black">2</span>
-                                <span>Paso 2: Parámetros y Capacidad Diaria (Activo)</span>
+                                <span>Paso 2: Parámetros y Capacidad (Activo)</span>
+                            </div>
+                            <span class="text-slate-600">➔</span>
+                            <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 border border-slate-800">
+                                <span class="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[10px] font-black">3</span>
+                                <span>Paso 3: Crear Tareas</span>
                             </div>
                         </div>
                         <span class="hidden sm:inline text-slate-400 text-[11px]">Asistente de Configuración</span>
@@ -1244,8 +1259,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
                             <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold">Cancelar</button>
                             <button type="button" id="btn-submit-create-project" class="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
-                                <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                <span>Crear Obra y Empezar</span>
+                                <span>Siguiente: Crear Tareas (Paso 3)</span>
+                                <i data-lucide="arrow-right" class="w-4 h-4"></i>
                             </button>
                         </div>
                     </div>
@@ -1315,8 +1330,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                 });
 
                 const created = this.store.createProject(data);
-                this.showToast(`Obra "${created.name}" creada exitosamente`, 'success');
-                this.closeModal();
+                this.showToast(`Obra "${created.name}" creada. Ahora agrega sus tareas iniciales.`, 'success');
 
                 // Actualizar selector del header
                 const selector = document.getElementById('project-select');
@@ -1326,6 +1340,9 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     `).join('');
                     selector.value = created.id;
                 }
+
+                // Transición al Paso 3: Creador de Tareas
+                this.openCreateProjectWizard(3, { createdProject: created, tasksCreatedCount: 0 });
             });
         }
 
@@ -1614,7 +1631,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                     <div class="flex items-center gap-2 flex-wrap">
                                         <h3 class="text-base sm:text-lg font-bold text-white">Catálogo de Recursos y Disciplinas</h3>
                                         ${wizardContext ? `
-                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 1 de 2: Configuración Previa</span>
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 1 de 3: Configuración Previa</span>
                                         ` : `
                                             <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">CRUD Industrial</span>
                                         `}
@@ -1629,7 +1646,9 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                     <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-700/80 text-xs">
                                         <span class="flex items-center gap-1 font-bold text-amber-400"><span class="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-black">1</span> Catálogo</span>
                                         <span class="text-slate-600">➔</span>
-                                        <span class="text-slate-400 flex items-center gap-1"><span class="w-4 h-4 rounded-full bg-slate-700 text-slate-300 flex items-center justify-center text-[10px] font-black">2</span> Parámetros Obra</span>
+                                        <span class="text-slate-400 flex items-center gap-1"><span class="w-4 h-4 rounded-full bg-slate-700 text-slate-300 flex items-center justify-center text-[10px] font-black">2</span> Parámetros</span>
+                                        <span class="text-slate-600">➔</span>
+                                        <span class="text-slate-500 flex items-center gap-1"><span class="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[10px] font-black">3</span> Tareas</span>
                                     </div>
                                 ` : ''}
                                 <button class="btn-close-modal text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700">
@@ -2194,10 +2213,12 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     }
 
     // ======================================================================
-    // 8. MODAL: CREADOR LIMPIO DE TAREAS (SIN CREACIÓN PREVIA EN BACKLOG)
+    // 8. MODAL: CREADOR LIMPIO DE TAREAS (SOPORTA MODO ASISTENTE PASO 3)
     // ======================================================================
-    openTaskCreator() {
-        const p = this.store.getActiveProject();
+    openTaskCreator(wizardContext = null) {
+        const p = (wizardContext && wizardContext.createdProject) 
+            ? wizardContext.createdProject 
+            : this.store.getActiveProject();
         const disciplines = this.store.getDisciplines();
         const catalogs = this.store.getCatalogs();
         const laborCatalog = catalogs.labor || [];
@@ -2205,6 +2226,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             ...(catalogs.machinery || []).map(m => ({ ...m, _cat: 'machinery' })),
             ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
         ];
+        let tasksCreatedCount = (wizardContext && wizardContext.tasksCreatedCount) || 0;
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
@@ -2212,19 +2234,52 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     
                     <div class="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
                         <div class="flex items-center gap-2">
-                            <i data-lucide="plus-square" class="w-5 h-5 text-amber-400"></i>
-                            <h3 class="text-base font-bold text-white">Nueva Tarea de Montaje</h3>
+                            <i data-lucide="${wizardContext ? 'list-plus' : 'plus-square'}" class="w-5 h-5 text-amber-400"></i>
+                            <div>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <h3 class="text-base font-bold text-white">${wizardContext ? 'Alta de Tareas de Montaje' : 'Nueva Tarea de Montaje'}</h3>
+                                    ${wizardContext ? `
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 3 de 3: Tareas Iniciales</span>
+                                    ` : ''}
+                                </div>
+                                <p class="text-xs text-slate-400">
+                                    ${wizardContext ? `Agregando tareas a la nueva obra: <strong class="text-white">${p ? `[${p.code}] ${p.name}` : ''}</strong>` : 'Configura los parámetros, dotación y programación de la tarea'}
+                                </p>
+                            </div>
                         </div>
                         <button class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
 
+                    ${wizardContext ? `
+                        <!-- Stepper Navigation Bar -->
+                        <div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between text-xs">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                                    <span>Paso 1: Catálogo</span>
+                                </div>
+                                <span class="text-slate-600">➔</span>
+                                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                                    <span>Paso 2: Obra Creada</span>
+                                </div>
+                                <span class="text-slate-600">➔</span>
+                                <div class="flex items-center gap-1.5 px-3 py-1 rounded-lg font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                    <span class="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-black">3</span>
+                                    <span>Paso 3: Crear Tareas (Activo)</span>
+                                </div>
+                            </div>
+                            <span class="text-xs text-amber-400 font-bold hidden sm:inline">Tareas agregadas: <span id="wizard-tasks-count" class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">${tasksCreatedCount}</span></span>
+                        </div>
+                    ` : ''}
+
                     <form id="form-create-task" class="p-4 sm:p-6 overflow-y-auto space-y-4 custom-scrollbar flex-grow text-xs">
                         
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div class="sm:col-span-2">
-                                <label class="block text-slate-300 font-semibold mb-1">Nombre de la Tarea</label>
+                                <label class="block text-slate-300 font-semibold mb-1">Nombre de la Tarea *</label>
                                 <input type="text" name="name" placeholder="Ej: Montaje de Cañería 8'' Sch 80" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none" required>
                             </div>
                             <div>
@@ -2298,12 +2353,29 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
                     </form>
 
-                    <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
-                        <button type="button" class="btn-close-modal px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700">Cancelar</button>
-                        <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20">
-                            <i data-lucide="check" class="w-4 h-4"></i> Guardar Tarea
-                        </button>
-                    </div>
+                    <!-- Footer -->
+                    ${wizardContext ? `
+                        <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <button type="button" id="btn-wizard-skip-tasks" class="w-full sm:w-auto px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-all cursor-pointer">
+                                Finalizar Asistente
+                            </button>
+                            <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                <button type="button" id="btn-save-and-add-another" class="px-4 py-2 text-xs font-bold rounded-xl bg-slate-700 hover:bg-slate-600 text-cyan-300 border border-cyan-500/30 flex items-center gap-1.5 shadow-sm transition-all cursor-pointer">
+                                    <i data-lucide="plus" class="w-4 h-4"></i> Guardar Tarea y Crear Otra
+                                </button>
+                                <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
+                                    <i data-lucide="check-circle" class="w-4 h-4"></i> Guardar y Empezar Obra
+                                </button>
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
+                            <button type="button" class="btn-close-modal px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700">Cancelar</button>
+                            <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20">
+                                <i data-lucide="check" class="w-4 h-4"></i> Guardar Tarea
+                            </button>
+                        </div>
+                    `}
 
                 </div>
             </div>
@@ -2379,58 +2451,132 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
 
+        const extractTaskFormData = () => {
+            const form = document.getElementById('form-create-task');
+            if (!form) return null;
+            const formData = new FormData(form);
+            const name = (formData.get('name') || '').trim();
+
+            const labor = {};
+            document.querySelectorAll('#create-task-labor-container .create-labor-row').forEach(row => {
+                const sel = row.querySelector('.labor-select-id');
+                const inp = row.querySelector('.labor-input-hours');
+                if (sel && inp) {
+                    const val = parseFloat(inp.value) || 0;
+                    if (val > 0) labor[sel.value] = (labor[sel.value] || 0) + val;
+                }
+            });
+
+            const machinery = {};
+            const equipment = {};
+            document.querySelectorAll('#create-task-mach-container .create-mach-row').forEach(row => {
+                const sel = row.querySelector('.mach-select-id');
+                const inp = row.querySelector('.mach-input-hours');
+                if (sel && inp) {
+                    const val = parseFloat(inp.value) || 0;
+                    if (val > 0) {
+                        const isEquip = (catalogs.equipment || []).some(e => e.id === sel.value);
+                        if (isEquip) {
+                            equipment[sel.value] = (equipment[sel.value] || 0) + val;
+                        } else {
+                            machinery[sel.value] = (machinery[sel.value] || 0) + val;
+                        }
+                    }
+                }
+            });
+
+            const targetDest = formData.get('targetDestination');
+            const startDate = formData.get('estimatedStart');
+            const addToBacklog = targetDest === 'backlog';
+
+            return {
+                name,
+                addToBacklog,
+                taskData: {
+                    name: name || 'Nueva Tarea',
+                    tag: (formData.get('tag') || '').trim(),
+                    discipline: formData.get('discipline') || 'piping',
+                    durationDays: parseInt(formData.get('durationDays')) || 3,
+                    estimatedStart: startDate,
+                    notes: (formData.get('notes') || '').trim(),
+                    labor,
+                    machinery,
+                    equipment
+                }
+            };
+        };
+
+        // Guardar y agregar otra tarea (Modo Asistente)
+        const addAnotherBtn = document.getElementById('btn-save-and-add-another');
+        if (addAnotherBtn) {
+            addAnotherBtn.addEventListener('click', () => {
+                const form = document.getElementById('form-create-task');
+                if (form && !form.checkValidity()) {
+                    form.reportValidity();
+                    return;
+                }
+
+                const parsed = extractTaskFormData();
+                if (!parsed || !parsed.name) {
+                    alert('Por favor ingrese al menos el nombre de la tarea para guardarla.');
+                    return;
+                }
+
+                this.store.createTask(parsed.taskData, parsed.addToBacklog);
+                tasksCreatedCount++;
+                const countBadge = document.getElementById('wizard-tasks-count');
+                if (countBadge) countBadge.textContent = String(tasksCreatedCount);
+
+                this.showToast(`Tarea "${parsed.name}" guardada exitosamente (${tasksCreatedCount} en total). Puedes agregar otra.`, 'success');
+
+                // Limpiar campos para la siguiente tarea
+                const nameInp = form.querySelector('input[name="name"]');
+                const tagInp = form.querySelector('input[name="tag"]');
+                const notesInp = form.querySelector('textarea[name="notes"]');
+                if (nameInp) { nameInp.value = ''; nameInp.focus(); }
+                if (tagInp) tagInp.value = '';
+                if (notesInp) notesInp.value = '';
+            });
+        }
+
+        // Omitir o finalizar sin agregar más tareas (Modo Asistente)
+        const skipBtn = document.getElementById('btn-wizard-skip-tasks');
+        if (skipBtn) {
+            skipBtn.addEventListener('click', () => {
+                this.showToast(`Configuración de obra finalizada (${tasksCreatedCount} tareas creadas).`, 'info');
+                this.closeModal();
+            });
+        }
+
+        // Botón principal de guardado
         const saveBtn = document.getElementById('btn-save-new-task');
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
                 const form = document.getElementById('form-create-task');
-                const formData = new FormData(form);
+                const parsed = extractTaskFormData();
 
-                const labor = {};
-                document.querySelectorAll('#create-task-labor-container .create-labor-row').forEach(row => {
-                    const sel = row.querySelector('.labor-select-id');
-                    const inp = row.querySelector('.labor-input-hours');
-                    if (sel && inp) {
-                        const val = parseFloat(inp.value) || 0;
-                        if (val > 0) labor[sel.value] = (labor[sel.value] || 0) + val;
+                if (wizardContext) {
+                    if (parsed && parsed.name) {
+                        this.store.createTask(parsed.taskData, parsed.addToBacklog);
+                        tasksCreatedCount++;
                     }
-                });
+                    this.showToast(`¡Obra y tareas configuradas exitosamente! (${tasksCreatedCount} tareas creadas)`, 'success');
+                    this.closeModal();
+                    return;
+                }
 
-                const machinery = {};
-                const equipment = {};
-                document.querySelectorAll('#create-task-mach-container .create-mach-row').forEach(row => {
-                    const sel = row.querySelector('.mach-select-id');
-                    const inp = row.querySelector('.mach-input-hours');
-                    if (sel && inp) {
-                        const val = parseFloat(inp.value) || 0;
-                        if (val > 0) {
-                            const isEquip = (catalogs.equipment || []).some(e => e.id === sel.value);
-                            if (isEquip) {
-                                equipment[sel.value] = (equipment[sel.value] || 0) + val;
-                            } else {
-                                machinery[sel.value] = (machinery[sel.value] || 0) + val;
-                            }
-                        }
-                    }
-                });
+                if (form && !form.checkValidity()) {
+                    form.reportValidity();
+                    return;
+                }
 
-                const targetDest = formData.get('targetDestination');
-                const startDate = formData.get('estimatedStart');
-                const addToBacklog = targetDest === 'backlog';
+                if (!parsed || !parsed.name) {
+                    alert('Por favor ingrese el nombre de la tarea.');
+                    return;
+                }
 
-                const taskData = {
-                    name: formData.get('name') || 'Nueva Tarea',
-                    tag: formData.get('tag') || '',
-                    discipline: formData.get('discipline') || 'piping',
-                    durationDays: parseInt(formData.get('durationDays')) || 3,
-                    estimatedStart: startDate,
-                    notes: formData.get('notes') || '',
-                    labor,
-                    machinery,
-                    equipment
-                };
-
-                this.store.createTask(taskData, addToBacklog);
-                this.showToast(addToBacklog ? 'Tarea creada y añadida a la bandeja de pendientes' : 'Tarea creada y programada en el calendario');
+                this.store.createTask(parsed.taskData, parsed.addToBacklog);
+                this.showToast(parsed.addToBacklog ? 'Tarea creada y añadida a la bandeja de pendientes' : 'Tarea creada y programada en el calendario');
                 this.closeModal();
             });
         }

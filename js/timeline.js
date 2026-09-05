@@ -11,12 +11,57 @@ export class TimelineRenderer {
         this.container = document.getElementById(containerId);
         this.backlogContainer = document.getElementById(backlogContainerId);
         this.montageContainer = document.getElementById(montageContainerId);
-        this.columnWidth = 90; // Ancho en px de cada columna diaria en desktop
+        
+        // Carga de zoom persistente y escala inicial optimizada para móviles (< 640px)
+        let savedZoom = null;
+        try {
+            if (typeof localStorage !== 'undefined') {
+                savedZoom = parseInt(localStorage.getItem('montaje_timeline_zoom'));
+            }
+        } catch(e) {}
+        const defaultWidth = (typeof window !== 'undefined' && window.innerWidth < 640) ? 65 : 90;
+        this.columnWidth = (!isNaN(savedZoom) && savedZoom >= 42 && savedZoom <= 180) ? savedZoom : defaultWidth;
+
         this.todayStr = '2026-09-08'; // Fecha simulada de corte de obra
         this.draggedTaskId = null;
         this.montageSearchQuery = '';
 
         this.initEvents();
+        this.updateZoomIndicator();
+    }
+
+    setZoom(width) {
+        const clamped = Math.max(42, Math.min(180, Math.round(width)));
+        if (this.columnWidth === clamped) return;
+        this.columnWidth = clamped;
+        try {
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('montaje_timeline_zoom', String(this.columnWidth));
+            }
+        } catch(e) {}
+        this.updateZoomIndicator();
+        this.render();
+    }
+
+    zoomIn(step = 15) {
+        this.setZoom(this.columnWidth + step);
+    }
+
+    zoomOut(step = 15) {
+        this.setZoom(this.columnWidth - step);
+    }
+
+    zoomReset() {
+        const defaultWidth = (typeof window !== 'undefined' && window.innerWidth < 640) ? 65 : 90;
+        this.setZoom(defaultWidth);
+    }
+
+    updateZoomIndicator() {
+        const pctLabel = document.getElementById('label-timeline-zoom-pct');
+        if (pctLabel) {
+            const pct = Math.round((this.columnWidth / 90) * 100);
+            pctLabel.textContent = `${pct}%`;
+        }
     }
 
     initEvents() {
@@ -49,6 +94,88 @@ export class TimelineRenderer {
                 this.montageSearchQuery = e.target.value.toLowerCase().trim();
                 const project = this.store.getActiveProject();
                 if (project) this.renderMontageTasksSidebar(project.tasks || []);
+            });
+        }
+
+        // Controles de Zoom en Pantalla
+        const btnZoomIn = document.getElementById('btn-timeline-zoom-in');
+        const btnZoomOut = document.getElementById('btn-timeline-zoom-out');
+        const btnZoomReset = document.getElementById('btn-timeline-zoom-reset');
+        if (btnZoomIn) btnZoomIn.addEventListener('click', () => this.zoomIn());
+        if (btnZoomOut) btnZoomOut.addEventListener('click', () => this.zoomOut());
+        if (btnZoomReset) btnZoomReset.addEventListener('click', () => this.zoomReset());
+
+        document.querySelectorAll('.btn-zoom-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const w = parseInt(btn.dataset.width);
+                if (!isNaN(w)) this.setZoom(w);
+            });
+        });
+
+        // Soporte de Pinch-to-Zoom táctil optimizado para teléfonos móviles
+        if (this.container) {
+            let initialPinchDist = 0;
+            let initialPinchWidth = 90;
+            let isPinching = false;
+            let lastPinchTime = 0;
+
+            this.container.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    isPinching = true;
+                    initialPinchDist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    initialPinchWidth = this.columnWidth;
+                }
+            }, { passive: true });
+
+            this.container.addEventListener('touchmove', (e) => {
+                if (isPinching && e.touches.length === 2 && initialPinchDist > 0) {
+                    const now = Date.now();
+                    if (now - lastPinchTime > 30) {
+                        lastPinchTime = now;
+                        const currentDist = Math.hypot(
+                            e.touches[0].clientX - e.touches[1].clientX,
+                            e.touches[0].clientY - e.touches[1].clientY
+                        );
+                        if (currentDist > 0) {
+                            const scale = currentDist / initialPinchDist;
+                            this.setZoom(Math.round(initialPinchWidth * scale));
+                        }
+                    }
+                }
+            }, { passive: true });
+
+            this.container.addEventListener('touchend', (e) => {
+                if (e.touches.length < 2) {
+                    isPinching = false;
+                    initialPinchDist = 0;
+                }
+            }, { passive: true });
+
+            // Ctrl + Rueda en Desktop / Touchpad
+            this.container.addEventListener('wheel', (e) => {
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    const delta = e.deltaY < 0 ? 12 : -12;
+                    this.setZoom(this.columnWidth + delta);
+                }
+            }, { passive: false });
+
+            // Doble toque en cabecera para alternar rápido entre vista compacta y normal
+            let lastTap = 0;
+            this.container.addEventListener('click', (e) => {
+                const dayHeader = e.target.closest('.timeline-day-header');
+                if (dayHeader) {
+                    const now = Date.now();
+                    if (now - lastTap < 300) {
+                        this.setZoom(this.columnWidth < 75 ? 110 : 55);
+                        lastTap = 0;
+                        return;
+                    }
+                    lastTap = now;
+                }
             });
         }
     }
@@ -346,37 +473,40 @@ export class TimelineRenderer {
         const isSupervision = this.store.state.isSupervisionMode;
         const filteredTasks = this.filterTasks(tasks);
 
-        // 1. Cabecera horizontal de días
+        // 1. Cabecera horizontal de días adaptativa al nivel de zoom
+        const isCompact = this.columnWidth < 65;
+        const isVeryCompact = this.columnWidth < 52;
+
         let headerColsHtml = '';
-        calendarDates.forEach((dateStr, idx) => {
+        calendarDates.forEach((dateStr) => {
             const { dayName, dayNum, monthName } = this.formatDateLabel(dateStr);
             const isToday = dateStr === this.todayStr;
             const hasConflict = conflicts.conflictsByDate && conflicts.conflictsByDate[dateStr] && conflicts.conflictsByDate[dateStr].length > 0;
             const conflictInfo = hasConflict ? conflicts.conflictsByDate[dateStr] : null;
 
             headerColsHtml += `
-                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-2 border-r border-slate-700/60 transition-colors ${isToday ? 'bg-amber-500/10 border-amber-500/40' : 'hover:bg-slate-800/40'}"
+                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-1.5 border-r border-slate-700/60 transition-colors select-none ${isToday ? 'bg-amber-500/10 border-amber-500/40' : 'hover:bg-slate-800/40'}"
                      style="width: ${this.columnWidth}px;"
                      data-date="${dateStr}">
                     
-                    <span class="text-[10px] uppercase font-bold tracking-wider ${isToday ? 'text-amber-400' : 'text-slate-400'}">
-                        ${dayName}
+                    <span class="${isVeryCompact ? 'text-[8px]' : 'text-[10px]'} uppercase font-bold tracking-wider ${isToday ? 'text-amber-400' : 'text-slate-400'}">
+                        ${isVeryCompact ? dayName.slice(0, 1) : dayName}
                     </span>
                     
-                    <div class="my-0.5 flex items-center justify-center w-7 h-7 rounded-full text-xs font-black ${isToday ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20' : 'text-slate-200'}">
+                    <div class="my-0.5 flex items-center justify-center ${isVeryCompact ? 'w-5 h-5 text-[10px]' : (isCompact ? 'w-6 h-6 text-xs' : 'w-7 h-7 text-xs')} rounded-full font-black ${isToday ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20' : 'text-slate-200'}">
                         ${dayNum}
                     </div>
 
-                    <span class="text-[9px] text-slate-400 font-medium">${monthName}</span>
+                    ${isVeryCompact ? '' : `<span class="text-[9px] text-slate-400 font-medium truncate">${monthName}</span>`}
 
                     ${hasConflict ? `
-                        <button class="btn-inspect-conflict mt-1 px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-1 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse"
+                        <button class="btn-inspect-conflict mt-0.5 px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-0.5 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse"
                                 title="Sobreasignación de recursos en esta fecha. Clic para inspeccionar."
                                 data-date="${dateStr}">
-                            <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> ${conflictInfo.length}
+                            <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> ${isVeryCompact ? '' : conflictInfo.length}
                         </button>
                     ` : `
-                        <span class="text-[9px] text-transparent select-none mt-1">•</span>
+                        <span class="text-[9px] text-transparent select-none mt-0.5">•</span>
                     `}
                 </div>
             `;
@@ -536,14 +666,14 @@ export class TimelineRenderer {
 
                         ${currentTab === 'comparativa' ? `
                             <!-- MODO COMPARATIVA: DOBLE BARRA (Línea Base vs Real) -->
-                            <div class="h-full flex flex-col justify-between p-1 bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
+                            <div class="h-full flex flex-col justify-between ${barWidth < 55 ? 'p-0.5' : 'p-1'} bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
                                 
                                 <!-- Barra Superior: Estimado (Línea Base) -->
-                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between px-2 text-[10px] text-slate-300">
-                                    <span class="flex items-center gap-1 font-mono font-bold text-slate-400">
-                                        <i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d
+                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between ${barWidth < 55 ? 'px-1' : 'px-2'} text-[10px] text-slate-300">
+                                    <span class="flex items-center gap-1 font-mono font-bold text-slate-400 truncate">
+                                        ${barWidth < 55 ? `${task.durationDays}d` : `<i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d`}
                                     </span>
-                                    <span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>
+                                    ${barWidth >= 55 ? `<span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>` : ''}
                                 </div>
 
                                 <!-- Barra Inferior: Real en Terreno -->
@@ -553,63 +683,77 @@ export class TimelineRenderer {
                                          style="width: ${task.progress || 0}%;"></div>
                                     
                                     <!-- Texto superpuesto -->
-                                    <div class="relative z-10 w-full px-2 flex items-center justify-between text-[10px] font-bold text-white">
-                                        <span class="truncate pr-1">${task.name} (${task.progress || 0}%)</span>
-                                        <div class="flex items-center gap-1 font-mono text-[9px] flex-shrink-0">
-                                            ${deltaDays !== 0 ? `
-                                                <span class="px-1 rounded ${deltaDays > 0 ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'}">
-                                                    ${deltaDays > 0 ? `+${deltaDays}d` : `${deltaDays}d`}
-                                                </span>
-                                            ` : ''}
-                                            ${deltaHH !== 0 ? `
-                                                <span class="px-1 rounded ${deltaHH > 0 ? 'bg-red-900/80 text-red-200' : 'bg-emerald-900/80 text-emerald-200'}">
-                                                    ${deltaHH > 0 ? `+${deltaHH} HH` : `${deltaHH} HH`}
-                                                </span>
-                                            ` : ''}
-                                        </div>
+                                    <div class="relative z-10 w-full ${barWidth < 55 ? 'px-1 justify-center' : 'px-2 justify-between'} flex items-center text-[10px] font-bold text-white">
+                                        <span class="truncate ${barWidth >= 55 ? 'pr-1' : ''}">${barWidth < 55 ? `${task.progress || 0}%` : `${task.name} (${task.progress || 0}%)`}</span>
+                                        ${barWidth >= 55 ? `
+                                            <div class="flex items-center gap-1 font-mono text-[9px] flex-shrink-0">
+                                                ${deltaDays !== 0 ? `
+                                                    <span class="px-1 rounded ${deltaDays > 0 ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'}">
+                                                        ${deltaDays > 0 ? `+${deltaDays}d` : `${deltaDays}d`}
+                                                    </span>
+                                                ` : ''}
+                                                ${deltaHH !== 0 ? `
+                                                    <span class="px-1 rounded ${deltaHH > 0 ? 'bg-red-900/80 text-red-200' : 'bg-emerald-900/80 text-emerald-200'}">
+                                                        ${deltaHH > 0 ? `+${deltaHH} HH` : `${deltaHH} HH`}
+                                                    </span>
+                                                ` : ''}
+                                            </div>
+                                        ` : ''}
                                     </div>
                                 </div>
 
                             </div>
                         ` : `
                             <!-- MODO NORMAL (ESTIMADO O REAL): TARJETA GANTT -->
-                            <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl p-2 shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-pointer">
+                            <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl ${barWidth < 55 ? 'p-1' : 'p-2'} shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-pointer">
                                 
                                 <!-- Relleno de barra de progreso interna -->
                                 <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all"
                                      style="width: ${task.progress || 0}%;"></div>
 
-                                <!-- Cabecera de la tarjeta dentro de la barra -->
-                                <div class="relative z-10 flex items-center justify-between gap-2">
-                                    <div class="flex items-center gap-1.5 truncate">
-                                        <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${discipline.badgeClass} border flex-shrink-0">
+                                ${barWidth < 55 ? `
+                                    <!-- FORMATO COMPACTO PARA ZOOM REDUCIDO / MÓVIL -->
+                                    <div class="relative z-10 flex flex-col justify-center items-center h-full text-center">
+                                        <span class="text-[8px] font-mono font-bold leading-tight ${discipline.badgeClass} px-1 rounded truncate max-w-full">
                                             ${task.tag || 'TSK'}
                                         </span>
-                                        <span class="text-xs font-bold text-slate-100 truncate" title="${task.name}">
-                                            ${task.name}
+                                        <span class="text-[9px] font-mono font-extrabold ${task.progress >= 100 ? 'text-blue-400' : 'text-emerald-400'}">
+                                            ${task.progress || 0}%
                                         </span>
                                     </div>
-                                    <span class="text-[10px] font-mono font-extrabold flex-shrink-0 ${task.progress >= 100 ? 'text-blue-400' : 'text-emerald-400'}">
-                                        ${task.progress || 0}%
-                                    </span>
-                                </div>
-
-                                <!-- Footer de la barra con recursos -->
-                                <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
-                                            <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
-                                        </span>
-                                        ${hasConflict ? `
-                                            <span class="flex items-center gap-0.5 text-red-400 font-bold animate-pulse" title="Conflicto de recursos en esta fecha">
-                                                <i data-lucide="alert-circle" class="w-3 h-3"></i> Conflicto
+                                ` : `
+                                    <!-- Cabecera de la tarjeta dentro de la barra -->
+                                    <div class="relative z-10 flex items-center justify-between gap-2">
+                                        <div class="flex items-center gap-1.5 truncate">
+                                            <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${discipline.badgeClass} border flex-shrink-0">
+                                                ${task.tag || 'TSK'}
                                             </span>
-                                        ` : ''}
+                                            <span class="text-xs font-bold text-slate-100 truncate" title="${task.name}">
+                                                ${task.name}
+                                            </span>
+                                        </div>
+                                        <span class="text-[10px] font-mono font-extrabold flex-shrink-0 ${task.progress >= 100 ? 'text-blue-400' : 'text-emerald-400'}">
+                                            ${task.progress || 0}%
+                                        </span>
                                     </div>
-                                    <span class="text-[9px] bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/50 font-mono">
-                                        ${task.durationDays}d
-                                    </span>
-                                </div>
+
+                                    <!-- Footer de la barra con recursos -->
+                                    <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
+                                                <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
+                                            </span>
+                                            ${hasConflict ? `
+                                                <span class="flex items-center gap-0.5 text-red-400 font-bold animate-pulse" title="Conflicto de recursos en esta fecha">
+                                                    <i data-lucide="alert-circle" class="w-3 h-3"></i> Conflicto
+                                                </span>
+                                            ` : ''}
+                                        </div>
+                                        <span class="text-[9px] bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/50 font-mono">
+                                            ${task.durationDays}d
+                                        </span>
+                                    </div>
+                                `}
 
                             </div>
                         `}
