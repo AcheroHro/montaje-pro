@@ -95,11 +95,11 @@ class AppController {
             });
         }
 
-        // Botón Crear Nueva Obra
+        // Botón Crear Nueva Obra (Asistente por Pasos: 1. Catálogo -> 2. Parámetros y Capacidad)
         const btnCreateProject = document.getElementById('btn-open-create-project');
         if (btnCreateProject) {
             btnCreateProject.addEventListener('click', () => {
-                this.modals.openCreateProjectModal();
+                this.modals.openCreateProjectWizard(1);
             });
         }
 

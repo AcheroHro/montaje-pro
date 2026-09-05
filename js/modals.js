@@ -1056,97 +1056,198 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     }
 
     // ======================================================================
-    // 6. MODAL: CREAR OBRA NUEVA DESDE CERO
+    // 6. ASISTENTE: ALTA DE NUEVA OBRA POR PASOS (WIZARD)
     // ======================================================================
     openCreateProjectModal() {
+        this.openCreateProjectWizard(1);
+    }
+
+    openCreateProjectWizard(step = 1, tempProjectData = null) {
+        if (step === 1) {
+            return this.openCatalogManagerModal('labor', { isWizard: true, step: 1, tempProjectData });
+        }
+
+        // Paso 2: Parámetros contractuales y límites de capacidad diaria precargados del catálogo
+        const catalogs = this.store.getCatalogs();
+        const laborList = catalogs.labor || [];
+        const machList = catalogs.machinery || [];
+        const equipList = catalogs.equipment || [];
+
+        const defaultData = {
+            name: '',
+            code: '',
+            client: '',
+            location: '',
+            startDate: '2026-09-15',
+            durationDays: 30,
+            contractBudget: 125000,
+            resourceLimits: {}
+        };
+
+        const currentData = { ...defaultData, ...(tempProjectData || {}) };
+        currentData.resourceLimits = currentData.resourceLimits || {};
+
+        const escapeAttr = (str) => (str === undefined || str === null ? '' : String(str).replace(/"/g, '&quot;'));
+
         const html = `
-            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in overflow-y-auto">
-                <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-fade-in overflow-y-auto">
+                <div class="bg-slate-900 border border-slate-700/90 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
                     
-                    <div class="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                            <i data-lucide="folder-plus" class="w-5 h-5 text-amber-400"></i>
+                    <!-- Header -->
+                    <div class="p-4 sm:p-5 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                                <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                            </div>
                             <div>
-                                <h3 class="text-base font-bold text-white">Alta de Nueva Obra / Proyecto de Montaje</h3>
-                                <p class="text-xs text-slate-400">Configura los parámetros contractuales y límites de recursos</p>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <h3 class="text-base sm:text-lg font-bold text-white">Alta de Nueva Obra / Proyecto de Montaje</h3>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 2 de 2: Parámetros y Capacidad</span>
+                                </div>
+                                <p class="text-xs text-slate-400">Configura los parámetros contractuales y los límites diarios de recursos para control de sobreasignación</p>
                             </div>
                         </div>
-                        <button class="btn-close-modal text-slate-400 hover:text-white p-1">
+                        <button class="btn-close-modal text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
 
-                    <form id="form-create-project" class="p-5 space-y-4 text-xs overflow-y-auto custom-scrollbar flex-grow">
+                    <!-- Stepper Bar -->
+                    <div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between text-xs">
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="btn-wizard-back-step1" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer">
+                                <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                                <span>Paso 1: Catálogo de Recursos</span>
+                                <span class="text-[10px] underline ml-1 text-emerald-300">Modificar</span>
+                            </button>
+                            <span class="text-slate-600">➔</span>
+                            <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                <span class="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-black">2</span>
+                                <span>Paso 2: Parámetros y Capacidad Diaria (Activo)</span>
+                            </div>
+                        </div>
+                        <span class="hidden sm:inline text-slate-400 text-[11px]">Asistente de Configuración</span>
+                    </div>
+
+                    <!-- Formulario de Obra -->
+                    <form id="form-create-project" class="p-4 sm:p-6 space-y-4 text-xs overflow-y-auto custom-scrollbar flex-grow">
                         
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div class="sm:col-span-2">
-                                <label class="block font-semibold text-slate-300 mb-1">Nombre de la Obra</label>
-                                <input type="text" name="name" placeholder="Ej: Montaje Skid Separador de Gas Batería 3" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+                                <label class="block font-semibold text-slate-300 mb-1">Nombre de la Obra *</label>
+                                <input type="text" name="name" value="${escapeAttr(currentData.name)}" placeholder="Ej: Montaje Skid Separador de Gas Batería 3" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
                             </div>
                             <div>
-                                <label class="block font-semibold text-slate-300 mb-1">Código / ID Obra</label>
-                                <input type="text" name="code" placeholder="Ej: SKID-2026-03" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500">
+                                <label class="block font-semibold text-slate-300 mb-1">Código / ID Obra *</label>
+                                <input type="text" name="code" value="${escapeAttr(currentData.code)}" placeholder="Ej: SKID-2026-03" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500">
                             </div>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <label class="block font-semibold text-slate-300 mb-1">Cliente / Comitente</label>
-                                <input type="text" name="client" placeholder="Ej: Pan American Energy / YPF" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+                                <input type="text" name="client" value="${escapeAttr(currentData.client)}" placeholder="Ej: Pan American Energy / YPF" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
                             </div>
                             <div>
                                 <label class="block font-semibold text-slate-300 mb-1">Ubicación / Yacimiento</label>
-                                <input type="text" name="location" placeholder="Ej: Cuenca del Golfo San Jorge" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+                                <input type="text" name="location" value="${escapeAttr(currentData.location)}" placeholder="Ej: Cuenca del Golfo San Jorge" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
                             </div>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
-                                <label class="block font-semibold text-slate-300 mb-1">Fecha de Inicio Contractual</label>
-                                <input type="date" name="startDate" value="2026-09-15" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+                                <label class="block font-semibold text-slate-300 mb-1">Fecha de Inicio Contractual *</label>
+                                <input type="date" name="startDate" value="${currentData.startDate || '2026-09-15'}" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
                             </div>
                             <div>
                                 <label class="block font-semibold text-slate-300 mb-1">Plazo Total (Días corridos)</label>
-                                <input type="number" name="durationDays" min="7" max="180" value="30" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono">
+                                <input type="number" name="durationDays" min="1" max="365" value="${currentData.durationDays || 30}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono">
                             </div>
                             <div>
                                 <label class="block font-semibold text-slate-300 mb-1">Presupuesto Cotizado ($ USD)</label>
-                                <input type="number" name="contractBudget" min="1000" step="5000" value="125000" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono font-bold text-amber-400">
+                                <input type="number" name="contractBudget" min="0" step="1000" value="${currentData.contractBudget || 125000}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono font-bold text-amber-400">
                             </div>
                         </div>
 
-                        <!-- Límites de Cuadrillas Máximas Diarias para Conflictos -->
-                        <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700/60">
-                            <h5 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5 text-cyan-400">
-                                <i data-lucide="shield-alert" class="w-4 h-4"></i> Capacidad Máxima Disponible Diaria (Control de Sobreasignación)
-                            </h5>
-                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                <div class="bg-slate-900/90 p-2 rounded-lg border border-slate-700 text-center">
-                                    <span class="text-[10px] text-slate-400 block">Soldadores 6G</span>
-                                    <input type="number" name="limit_soldador" value="4" min="1" class="w-full bg-slate-800 rounded p-1 text-white font-mono text-center mt-1">
+                        <!-- Sección Dinámica: Capacidad Máxima Disponible Diaria -->
+                        <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700/60 space-y-4">
+                            <div class="flex items-center justify-between flex-wrap gap-2">
+                                <h5 class="font-bold text-slate-200 flex items-center gap-1.5 text-cyan-400">
+                                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                                    <span>Capacidad Máxima Disponible Diaria (Control de Sobreasignación)</span>
+                                </h5>
+                                <span class="text-[11px] text-slate-400">Precargado automáticamente desde el Catálogo</span>
+                            </div>
+
+                            <!-- Subsección Mano de Obra -->
+                            <div>
+                                <span class="text-[11px] font-bold text-cyan-300 uppercase tracking-wider block mb-2 flex items-center gap-1">
+                                    <i data-lucide="users" class="w-3.5 h-3.5"></i> Dotación Diaria Máxima - Mano de Obra (Personas en simultáneo)
+                                </span>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                                    ${laborList.map(res => {
+                                        const val = (currentData.resourceLimits && currentData.resourceLimits[res.id] !== undefined)
+                                            ? currentData.resourceLimits[res.id]
+                                            : (res.defaultLimit !== undefined ? res.defaultLimit : 4);
+                                        return `
+                                            <div class="bg-slate-900/90 p-2.5 rounded-xl border border-slate-700/80 hover:border-cyan-500/40 transition-all flex flex-col justify-between">
+                                                <div class="mb-1">
+                                                    <span class="text-xs font-semibold text-slate-200 block truncate" title="${res.name}">${res.name}</span>
+                                                    <span class="text-[10px] text-slate-500">Unidad: ${res.unit || 'HH'}</span>
+                                                </div>
+                                                <div class="flex items-center gap-1.5 mt-1">
+                                                    <input type="number" name="limit_${res.id}" value="${val}" min="0" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1 px-2 text-white font-mono text-center font-bold text-xs focus:border-cyan-500 focus:outline-none">
+                                                    <span class="text-[10px] text-slate-400 shrink-0">pers/día</span>
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
                                 </div>
-                                <div class="bg-slate-900/90 p-2 rounded-lg border border-slate-700 text-center">
-                                    <span class="text-[10px] text-slate-400 block">Cañistas</span>
-                                    <input type="number" name="limit_canista" value="6" min="1" class="w-full bg-slate-800 rounded p-1 text-white font-mono text-center mt-1">
-                                </div>
-                                <div class="bg-slate-900/90 p-2 rounded-lg border border-slate-700 text-center">
-                                    <span class="text-[10px] text-slate-400 block">Montadores</span>
-                                    <input type="number" name="limit_montador" value="5" min="1" class="w-full bg-slate-800 rounded p-1 text-white font-mono text-center mt-1">
-                                </div>
-                                <div class="bg-slate-900/90 p-2 rounded-lg border border-slate-700 text-center">
-                                    <span class="text-[10px] text-slate-400 block">Grúas 50T</span>
-                                    <input type="number" name="limit_grua_50t" value="1" min="1" class="w-full bg-slate-800 rounded p-1 text-white font-mono text-center mt-1">
+                            </div>
+
+                            <!-- Subsección Maquinarias y Equipos -->
+                            <div>
+                                <span class="text-[11px] font-bold text-orange-300 uppercase tracking-wider block mb-2 flex items-center gap-1">
+                                    <i data-lucide="truck" class="w-3.5 h-3.5"></i> Disponibilidad Diaria - Equipos y Maquinarias
+                                </span>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                                    ${[...machList, ...equipList].map(res => {
+                                        const defaultVal = res.defaultLimit !== undefined ? res.defaultLimit : (res.unit === 'm²' ? 200 : 1);
+                                        const val = (currentData.resourceLimits && currentData.resourceLimits[res.id] !== undefined)
+                                            ? currentData.resourceLimits[res.id]
+                                            : defaultVal;
+                                        return `
+                                            <div class="bg-slate-900/90 p-2.5 rounded-xl border border-slate-700/80 hover:border-orange-500/40 transition-all flex flex-col justify-between">
+                                                <div class="mb-1">
+                                                    <span class="text-xs font-semibold text-slate-200 block truncate" title="${res.name}">${res.name}</span>
+                                                    <span class="text-[10px] text-slate-500">Unidad: ${res.unit || 'hs'}</span>
+                                                </div>
+                                                <div class="flex items-center gap-1.5 mt-1">
+                                                    <input type="number" name="limit_${res.id}" value="${val}" min="0" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1 px-2 text-white font-mono text-center font-bold text-xs focus:border-orange-500 focus:outline-none">
+                                                    <span class="text-[10px] text-slate-400 shrink-0">${res.unit === 'm²' ? 'm²' : 'u/día'}</span>
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
                                 </div>
                             </div>
                         </div>
 
                     </form>
 
-                    <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
-                        <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-700 text-slate-300 text-xs font-semibold">Cancelar</button>
-                        <button type="button" id="btn-submit-create-project" class="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20">
-                            <i data-lucide="plus-circle" class="w-4 h-4"></i> Crear Obra y Empezar
+                    <!-- Footer Navigation -->
+                    <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-3">
+                        <button type="button" id="btn-wizard-back-bottom" class="w-full sm:w-auto px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer">
+                            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                            <span>Volver a Catálogo (Paso 1)</span>
                         </button>
+                        <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                            <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold">Cancelar</button>
+                            <button type="button" id="btn-submit-create-project" class="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
+                                <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                                <span>Crear Obra y Empezar</span>
+                            </button>
+                        </div>
                     </div>
 
                 </div>
@@ -1154,41 +1255,67 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         `;
 
         this.modalRoot.innerHTML = html;
+        document.body.classList.add('overflow-hidden');
 
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        const extractCurrentData = () => {
+            const form = document.getElementById('form-create-project');
+            if (!form) return currentData;
+            const formData = new FormData(form);
+            const limits = {};
+            for (const [key, value] of formData.entries()) {
+                if (key.startsWith('limit_')) {
+                    const resId = key.substring(6);
+                    limits[resId] = Math.max(0, parseInt(value) || 0);
+                }
+            }
+            return {
+                name: (formData.get('name') || '').trim(),
+                code: (formData.get('code') || '').trim(),
+                client: (formData.get('client') || '').trim(),
+                location: (formData.get('location') || '').trim(),
+                startDate: formData.get('startDate') || '',
+                durationDays: parseInt(formData.get('durationDays')) || 30,
+                contractBudget: parseFloat(formData.get('contractBudget')) || 125000,
+                resourceLimits: limits
+            };
+        };
+
+        const goBackStep1 = () => {
+            const dataToPreserve = extractCurrentData();
+            this.openCreateProjectWizard(1, dataToPreserve);
+        };
+
+        const backBtnTop = document.getElementById('btn-wizard-back-step1');
+        const backBtnBottom = document.getElementById('btn-wizard-back-bottom');
+        if (backBtnTop) backBtnTop.addEventListener('click', goBackStep1);
+        if (backBtnBottom) backBtnBottom.addEventListener('click', goBackStep1);
 
         const submitBtn = document.getElementById('btn-submit-create-project');
         if (submitBtn) {
             submitBtn.addEventListener('click', () => {
                 const form = document.getElementById('form-create-project');
-                const formData = new FormData(form);
+                if (form && !form.checkValidity()) {
+                    form.reportValidity();
+                    return;
+                }
 
-                const newProjData = {
-                    name: formData.get('name'),
-                    code: formData.get('code'),
-                    client: formData.get('client'),
-                    location: formData.get('location'),
-                    startDate: formData.get('startDate'),
-                    durationDays: parseInt(formData.get('durationDays')) || 30,
-                    contractBudget: parseFloat(formData.get('contractBudget')) || 100000,
-                    resourceLimits: {
-                        soldador: parseInt(formData.get('limit_soldador')) || 4,
-                        canista: parseInt(formData.get('limit_canista')) || 6,
-                        montador: parseInt(formData.get('limit_montador')) || 5,
-                        ayudante: 8,
-                        supervisor: 2,
-                        grua_50t: parseInt(formData.get('limit_grua_50t')) || 1,
-                        hidrogrua: 1,
-                        hidroelevador: 2,
-                        andamios: 200,
-                        generador: 2,
-                        motosoldadora: 3,
-                        bomba_hidro: 1
+                const data = extractCurrentData();
+                if (!data.name || !data.code || !data.startDate) {
+                    alert('Por favor complete los campos obligatorios: Nombre de la Obra, Código y Fecha de Inicio Contractual.');
+                    return;
+                }
+
+                // Asegurar que todos los recursos del catálogo tengan un límite establecido
+                [...laborList, ...machList, ...equipList].forEach(res => {
+                    if (data.resourceLimits[res.id] === undefined) {
+                        data.resourceLimits[res.id] = res.defaultLimit !== undefined ? res.defaultLimit : (res.unit === 'm²' ? 200 : 2);
                     }
-                };
+                });
 
-                const created = this.store.createProject(newProjData);
-                this.showToast(`Obra ${created.name} creada exitosamente`);
+                const created = this.store.createProject(data);
+                this.showToast(`Obra "${created.name}" creada exitosamente`, 'success');
                 this.closeModal();
 
                 // Actualizar selector del header
@@ -1453,7 +1580,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     // ======================================================================
     // 7.B MODAL: GESTOR DE CATÁLOGO CRUD (EQUIPOS, MANO DE OBRA Y DISCIPLINAS)
     // ======================================================================
-    openCatalogManagerModal(initialTab = 'labor') {
+    openCatalogManagerModal(initialTab = 'labor', wizardContext = null) {
         const isSupervision = this.store.state.isSupervisionMode;
         let activeTab = initialTab;
         let searchTerm = '';
@@ -1480,20 +1607,35 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <!-- Header -->
                         <div class="p-4 sm:p-5 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
                             <div class="flex items-center gap-2.5">
-                                <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                                <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
                                     <i data-lucide="database" class="w-5 h-5"></i>
                                 </div>
                                 <div>
-                                    <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                                        Catálogo de Recursos y Disciplinas
-                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">CRUD Industrial</span>
-                                    </h3>
-                                    <p class="text-xs text-slate-400">Administra especialidades de mano de obra, maquinarias, equipos y disciplinas de montaje</p>
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <h3 class="text-base sm:text-lg font-bold text-white">Catálogo de Recursos y Disciplinas</h3>
+                                        ${wizardContext ? `
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 1 de 2: Configuración Previa</span>
+                                        ` : `
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">CRUD Industrial</span>
+                                        `}
+                                    </div>
+                                    <p class="text-xs text-slate-400">
+                                        ${wizardContext ? 'Revisa, agrega o modifica recursos que estarán disponibles en la nueva obra antes de definir sus límites' : 'Administra especialidades de mano de obra, maquinarias, equipos y disciplinas de montaje'}
+                                    </p>
                                 </div>
                             </div>
-                            <button class="btn-close-modal text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700">
-                                <i data-lucide="x" class="w-5 h-5"></i>
-                            </button>
+                            <div class="flex items-center gap-2">
+                                ${wizardContext ? `
+                                    <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-700/80 text-xs">
+                                        <span class="flex items-center gap-1 font-bold text-amber-400"><span class="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-black">1</span> Catálogo</span>
+                                        <span class="text-slate-600">➔</span>
+                                        <span class="text-slate-400 flex items-center gap-1"><span class="w-4 h-4 rounded-full bg-slate-700 text-slate-300 flex items-center justify-center text-[10px] font-black">2</span> Parámetros Obra</span>
+                                    </div>
+                                ` : ''}
+                                <button class="btn-close-modal text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
                         </div>
 
                         <!-- Pestañas del Catálogo -->
@@ -1716,9 +1858,23 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         </div>
 
                         <!-- Footer -->
-                        <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-between items-center">
-                            <span class="text-xs text-slate-400">Los cambios aplicados impactan inmediatamente en los selectores de tareas y partes diarios.</span>
-                            <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cerrar</button>
+                        <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <span class="text-xs text-slate-400">
+                                ${wizardContext 
+                                    ? 'Una vez revisados los recursos, avanza al Paso 2 para configurar los datos y capacidad diaria de la obra.' 
+                                    : 'Los cambios aplicados impactan inmediatamente en los selectores de tareas y partes diarios.'}
+                            </span>
+                            <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                ${wizardContext ? `
+                                    <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold">Cancelar</button>
+                                    <button type="button" id="btn-wizard-next-step" class="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
+                                        <span>Siguiente: Parámetros de la Obra</span>
+                                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                                    </button>
+                                ` : `
+                                    <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cerrar</button>
+                                `}
+                            </div>
                         </div>
 
                     </div>
@@ -1818,6 +1974,21 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             this.modalRoot.querySelectorAll('.btn-close-modal').forEach(btn => {
                 btn.addEventListener('click', () => this.closeModal());
             });
+
+            // Wizard Next Step button
+            if (wizardContext) {
+                const wizardNextBtn = document.getElementById('btn-wizard-next-step');
+                if (wizardNextBtn) {
+                    wizardNextBtn.addEventListener('click', () => {
+                        if (editingItem) {
+                            if (!confirm('Tiene un registro de catálogo en edición sin guardar. ¿Desea descartar y avanzar al Paso 2?')) {
+                                return;
+                            }
+                        }
+                        this.openCreateProjectWizard(2, wizardContext.tempProjectData);
+                    });
+                }
+            }
 
             // Wire Form events if form is displayed
             if (editingItem) {
