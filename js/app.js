@@ -174,9 +174,11 @@ class AppController {
                 if (isHidden) {
                     backlogSidebar.classList.remove('hidden');
                     backlogSidebar.classList.add('flex');
+                    btnToggleBacklogReal.classList.add('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
                 } else {
                     backlogSidebar.classList.add('hidden');
                     backlogSidebar.classList.remove('flex');
+                    btnToggleBacklogReal.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
                 }
             });
         }
@@ -186,10 +188,13 @@ class AppController {
             btnCloseBacklog.addEventListener('click', () => {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('flex');
+                if (btnToggleBacklogReal) {
+                    btnToggleBacklogReal.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
+                }
             });
         }
 
-        // Toggle Gaveta Lateral de Tareas de Montaje (Lateral Derecho en Tab Real)
+        // Toggle Gaveta Lateral de Tareas de Montaje (Accesible en las 3 pestañas)
         const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
         const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
         if (btnToggleTasksSidebar && montageTasksSidebar) {
@@ -198,9 +203,11 @@ class AppController {
                 if (isHidden) {
                     montageTasksSidebar.classList.remove('hidden');
                     montageTasksSidebar.classList.add('flex');
+                    btnToggleTasksSidebar.classList.add('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
                 } else {
                     montageTasksSidebar.classList.add('hidden');
                     montageTasksSidebar.classList.remove('flex');
+                    btnToggleTasksSidebar.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
                 }
             });
         }
@@ -210,6 +217,9 @@ class AppController {
             btnCloseMontage.addEventListener('click', () => {
                 montageTasksSidebar.classList.add('hidden');
                 montageTasksSidebar.classList.remove('flex');
+                if (btnToggleTasksSidebar) {
+                    btnToggleTasksSidebar.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+                }
             });
         }
 
@@ -223,6 +233,13 @@ class AppController {
                 }
             });
         }
+
+        // Delegación de eventos para botones globales
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.modals.activeModal) {
+                this.modals.closeModal();
+            }
+        });
     }
 
     /**
@@ -282,51 +299,49 @@ class AppController {
         const btnToggleBacklog = document.getElementById('btn-toggle-backlog-real') || document.getElementById('btn-toggle-backlog');
         const btnToggleTasks = document.getElementById('btn-toggle-tasks-sidebar');
 
+        // El botón de Tareas Montaje permanece SIEMPRE disponible en las 3 pestañas
+        if (btnToggleTasks) {
+            btnToggleTasks.classList.remove('hidden');
+            btnToggleTasks.classList.add('flex');
+            btnToggleTasks.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+        }
+
+        // Por defecto, las gavetas inician ocultas para mostrar únicamente el calendario completo
+        if (montageSidebar) {
+            montageSidebar.classList.add('hidden');
+            montageSidebar.classList.remove('flex');
+        }
+
         if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar totalmente las gavetas y sus botones conmutadores
+            // Pestaña Estimado: Ocultar bandeja de pendientes
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('lg:flex', 'flex');
-            }
-            if (montageSidebar) {
-                montageSidebar.classList.add('hidden');
-                montageSidebar.classList.remove('flex');
+                backlogSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
             }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.add('hidden');
-                btnToggleTasks.classList.remove('flex');
-            }
         } else if (activeTab === 'real') {
-            // Pestaña Real: Mostrar botones conmutadores de gavetas para gestión en campo
+            // Pestaña Real: Permitir abrir bandeja de pendientes
+            if (backlogSidebar) {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('flex');
+            }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');
-            }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.remove('hidden');
-                btnToggleTasks.classList.add('flex');
+                btnToggleBacklog.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
             }
         } else if (activeTab === 'comparativa') {
-            // Pestaña Comparativa: Ocultar gavetas para maximizar la comparación visual en pantalla completa
+            // Pestaña Comparativa: Ocultar bandeja de pendientes
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('lg:flex', 'flex');
-            }
-            if (montageSidebar) {
-                montageSidebar.classList.add('hidden');
-                montageSidebar.classList.remove('flex');
+                backlogSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
-            }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.add('hidden');
-                btnToggleTasks.classList.remove('flex');
             }
         }
 

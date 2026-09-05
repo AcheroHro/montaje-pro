@@ -275,9 +275,10 @@
                     <span>Pendientes (<span id="backlog-count-badge-real">0</span>)</span>
                 </button>
 
-                <button id="btn-toggle-tasks-sidebar" class="hidden px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 text-xs font-semibold items-center gap-1.5 transition-all" title="Mostrar/Ocultar Gaveta Lateral de Tareas de Montaje">
+                <button id="btn-toggle-tasks-sidebar" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 text-xs font-semibold transition-all shadow-sm" title="Mostrar/Ocultar Gaveta Lateral de Tareas de Montaje">
                     <i data-lucide="clipboard-list" class="w-4 h-4"></i>
                     <span>Tareas Montaje</span>
+                    <span id="tasks-count-badge" class="ml-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-bold">0</span>
                 </button>
             </div>
 
@@ -294,8 +295,8 @@
          ==================================================================== -->
     <main class="flex-grow flex overflow-hidden relative">
         
-        <!-- GAVETA LATERAL IZQUIERDA: BANDEJA DE PENDIENTES (SLIDE-IN / COLLAPSIBLE) -->
-        <aside id="backlog-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 p-3 hidden flex-col z-30 transition-all shadow-xl">
+        <!-- GAVETA LATERAL IZQUIERDA: BANDEJA DE PENDIENTES (SLIDE-IN / COLLAPSIBLE OVERLAY) -->
+        <aside id="backlog-sidebar" class="absolute inset-y-0 left-0 w-80 sm:w-96 bg-slate-900/98 backdrop-blur-md border-r border-slate-800 p-3.5 hidden flex-col z-40 transition-all shadow-2xl">
             
             <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
@@ -331,8 +332,8 @@
             </div>
         </section>
 
-        <!-- GAVETA LATERAL DERECHA: TAREAS DE MONTAJE (TAB REAL - SLIDE-IN / COLLAPSIBLE) -->
-        <aside id="montage-tasks-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-l border-slate-800 p-3 hidden flex-col z-30 transition-all shadow-xl">
+        <!-- GAVETA LATERAL DERECHA: TAREAS DE MONTAJE (SLIDE-IN / COLLAPSIBLE OVERLAY) -->
+        <aside id="montage-tasks-sidebar" class="absolute inset-y-0 right-0 w-80 sm:w-96 bg-slate-900/98 backdrop-blur-md border-l border-slate-800 p-3.5 hidden flex-col z-40 transition-all shadow-2xl">
             <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
                     <div class="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">

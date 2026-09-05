@@ -1575,6 +1575,9 @@ class TimelineRenderer {
             );
         }
 
+        const countBadge = document.getElementById('tasks-count-badge');
+        if (countBadge) countBadge.textContent = filtered.length;
+
         if (filtered.length === 0) {
             this.montageContainer.innerHTML = `
                 <div class="p-6 text-center text-slate-400 text-xs border border-dashed border-slate-700/60 rounded-xl my-2">
@@ -1651,7 +1654,7 @@ class TimelineRenderer {
             b.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const tid = b.dataset.taskId;
-                if (window.appModals) window.appModals.openDailyLogModal(tid);
+                if (window.appModals) window.appModals.openDailyLog(tid);
             });
         });
 
@@ -1832,40 +1835,32 @@ class TimelineRenderer {
             `;
         });
 
+        // Ensamblado final de ancho del calendario
+        const totalTimelineWidth = calendarDates.length * this.columnWidth;
+
         // 2. Construcción de los carriles de tareas (Swimlanes)
         let lanesHtml = '';
         filteredTasks.forEach((task, index) => {
-            const laneHtml = this.renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, index);
+            const laneHtml = this.renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, index, totalTimelineWidth);
             lanesHtml += laneHtml;
         });
 
         // 3. Fila de carga de recursos (Resource Workload Heatmap)
         let heatmapHtml = '';
         if (this.store.state.filters.showHeatmap) {
-            heatmapHtml = this.renderResourceHeatmap(calendarDates, conflicts);
+            heatmapHtml = this.renderResourceHeatmap(calendarDates, conflicts, totalTimelineWidth);
         }
-
-        // Ensamblado final
-        const totalTimelineWidth = calendarDates.length * this.columnWidth;
 
         this.container.innerHTML = `
             <div class="timeline-wrapper select-none overflow-x-auto overflow-y-visible custom-scrollbar relative pb-4" style="min-width: 100%;">
                 
-                <!-- Barra superior de calendario -->
+                <!-- Barra superior de calendario (Gantt puro sin columnas laterales dentro del calendario) -->
                 <div class="sticky top-0 z-20 flex bg-slate-900/95 backdrop-blur border-b border-slate-700/80 shadow-md" style="width: ${totalTimelineWidth}px;">
-                    <!-- Espacio alineador izquierdo para información de tarea -->
-                    <div class="w-72 flex-shrink-0 p-3 flex items-center justify-between border-r border-slate-700/80 bg-slate-900/95 sticky left-0 z-30 shadow-r">
-                        <div class="text-xs font-bold text-slate-200 uppercase tracking-wide flex items-center gap-1.5">
-                            <i data-lucide="layers" class="w-4 h-4 text-amber-400"></i> Tareas de Montaje (${filteredTasks.length})
-                        </div>
-                        <span class="text-[10px] text-slate-400 font-mono">Día / Duración</span>
-                    </div>
-                    <!-- Columnas de días -->
                     <div class="flex">${headerColsHtml}</div>
                 </div>
 
-                <!-- Cuerpo de Carriles de Tareas -->
-                <div class="relative divide-y divide-slate-800/80" style="width: ${totalTimelineWidth + 288}px;">
+                <!-- Cuerpo de Carriles de Tareas (Gantt Puro) -->
+                <div class="relative divide-y divide-slate-800/80" style="width: ${totalTimelineWidth}px;">
                     ${lanesHtml.length > 0 ? lanesHtml : `
                         <div class="p-12 text-center text-slate-400 text-sm">
                             <i data-lucide="clipboard-x" class="w-10 h-10 mx-auto mb-2 text-slate-500 opacity-60"></i>
@@ -1892,7 +1887,20 @@ class TimelineRenderer {
             });
         });
 
-        // 6. Botones de edición y reporte rápido
+        // 6. Clic en las barras de tareas para abrir Parte Diario (en Real) o Editor de Tarea (en Estimado/Comparativa)
+        this.container.querySelectorAll('.timeline-bar-container').forEach(bar => {
+            bar.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const taskId = bar.dataset.taskId;
+                if (currentTab === 'real') {
+                    if (window.appModals) window.appModals.openDailyLog(taskId);
+                } else {
+                    if (window.appModals) window.appModals.openTaskEditor(taskId);
+                }
+            });
+        });
+
+        // Botones de edición y reporte rápido auxiliares
         this.container.querySelectorAll('.btn-open-task').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1915,7 +1923,7 @@ class TimelineRenderer {
     /**
      * Renderiza el carril de una tarea con su barra o doble barra (en Comparativa)
      */
-    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex) {
+    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex, totalTimelineWidth) {
         const disciplines = this.store.getDisciplines();
         const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: 'General', badgeClass: 'bg-slate-700 text-slate-300' };
         const taskConflictList = conflicts.taskConflicts ? conflicts.taskConflicts[task.id] : null;
@@ -1964,142 +1972,114 @@ class TimelineRenderer {
             statusBadge = { bg: 'bg-amber-500', border: 'border-amber-400', text: 'text-amber-400', label: 'Pendiente' };
         }
 
-        return `
-            <div class="task-lane flex items-stretch hover:bg-slate-800/30 transition-colors relative group" data-task-id="${task.id}">
-                
-                <!-- Columna Izquierda Fija: Metadatos de la Tarea -->
-                <div class="w-72 flex-shrink-0 p-3 border-r border-slate-700/80 bg-slate-900/90 sticky left-0 z-10 flex flex-col justify-between shadow-r backdrop-blur">
-                    <div>
-                        <div class="flex items-center justify-between gap-1 mb-1">
-                            <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-semibold ${discipline.badgeClass} border">
-                                ${task.tag || 'TSK'}
-                            </span>
-                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusBadge.bg}/20 ${statusBadge.text} border ${statusBadge.border}/30">
-                                ${statusBadge.label}
-                            </span>
-                        </div>
-                        <h4 class="text-xs font-semibold text-slate-100 hover:text-amber-400 cursor-pointer line-clamp-1 btn-open-task" data-task-id="${task.id}" title="${task.name}">
-                            ${task.name}
-                        </h4>
-                    </div>
+        const laneWidth = totalTimelineWidth || (calendarDates.length * this.columnWidth);
 
-                    <div class="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-800 text-[11px] text-slate-400">
-                        <div class="flex items-center gap-2">
-                            <span>${task.durationDays}d</span>
-                            <span>•</span>
-                            <span class="text-cyan-400 font-mono">${realHH} HH</span>
-                        </div>
-                        <div class="flex items-center gap-1.5">
-                            <button class="btn-quick-progress p-1 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 rounded" title="Cargar avance rápido (Parte Diario)" data-task-id="${task.id}">
-                                <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button class="btn-open-task p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded" title="Editar tarea" data-task-id="${task.id}">
-                                <i data-lucide="settings-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                        </div>
-                    </div>
+        return `
+            <div class="task-lane relative flex items-center py-2 h-20 hover:bg-slate-800/30 transition-colors border-b border-slate-800/60 group" 
+                 style="width: ${laneWidth}px;" 
+                 data-task-id="${task.id}">
+                
+                <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
+                <div class="absolute inset-0 flex">
+                    ${calendarDates.map(d => `
+                        <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
+                             style="width: ${this.columnWidth}px;" 
+                             data-date="${d}"></div>
+                    `).join('')}
                 </div>
 
-                <!-- Área de la Línea de Tiempo (Carril de Días) -->
-                <div class="relative flex-grow flex items-center py-2 h-20">
-                    
-                    <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
-                    <div class="absolute inset-0 flex">
-                        ${calendarDates.map(d => `
-                            <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
-                                 style="width: ${this.columnWidth}px;" 
-                                 data-date="${d}"></div>
-                        `).join('')}
-                    </div>
+                ${isPlaced ? `
+                    <!-- BARRA(S) DE TAREA INTERACTIVA(S) -->
+                    <div class="timeline-bar-container absolute top-2 bottom-2 rounded-xl transition-all select-none cursor-pointer"
+                         style="left: ${leftOffset}px; width: ${barWidth}px;"
+                         draggable="${!isSupervision}"
+                         data-task-id="${task.id}"
+                         title="${task.name} (${task.durationDays}d)">
 
-                    ${isPlaced ? `
-                        <!-- BARRA(S) DE TAREA INTERACTIVA(S) -->
-                        <div class="timeline-bar-container absolute top-2 bottom-2 rounded-xl transition-all select-none"
-                             style="left: ${leftOffset}px; width: ${barWidth}px;"
-                             draggable="${!isSupervision}"
-                             data-task-id="${task.id}">
-
-                            ${currentTab === 'comparativa' ? `
-                                <!-- MODO COMPARATIVA: DOBLE BARRA (Línea Base vs Real) -->
-                                <div class="h-full flex flex-col justify-between p-1 bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
-                                    
-                                    <!-- Barra Superior: Estimado (Línea Base) -->
-                                    <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between px-2 text-[10px] text-slate-300">
-                                        <span class="flex items-center gap-1 font-mono font-bold text-slate-400">
-                                            <i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d
-                                        </span>
-                                        <span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>
-                                    </div>
-
-                                    <!-- Barra Inferior: Real en Terreno -->
-                                    <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80">
-                                        <!-- Progreso real llenado -->
-                                        <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-gradient-to-r from-red-600 to-rose-500' : (task.progress >= 100 ? 'bg-gradient-to-r from-blue-600 to-cyan-500' : 'bg-gradient-to-r from-emerald-600 to-teal-500')} opacity-90 transition-all"
-                                             style="width: ${task.progress || 0}%;"></div>
-                                        
-                                        <!-- Texto superpuesto -->
-                                        <div class="relative z-10 w-full px-2 flex items-center justify-between text-[10px] font-bold text-white">
-                                            <span>Real: ${task.progress || 0}%</span>
-                                            <div class="flex items-center gap-1 font-mono text-[9px]">
-                                                ${deltaDays !== 0 ? `
-                                                    <span class="px-1 rounded ${deltaDays > 0 ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'}">
-                                                        ${deltaDays > 0 ? `+${deltaDays}d` : `${deltaDays}d`}
-                                                    </span>
-                                                ` : ''}
-                                                ${deltaHH !== 0 ? `
-                                                    <span class="px-1 rounded ${deltaHH > 0 ? 'bg-red-900/80 text-red-200' : 'bg-emerald-900/80 text-emerald-200'}">
-                                                        ${deltaHH > 0 ? `+${deltaHH} HH` : `${deltaHH} HH`}
-                                                    </span>
-                                                ` : ''}
-                                            </div>
-                                        </div>
-                                    </div>
-
+                        ${currentTab === 'comparativa' ? `
+                            <!-- MODO COMPARATIVA: DOBLE BARRA (Línea Base vs Real) -->
+                            <div class="h-full flex flex-col justify-between p-1 bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
+                                
+                                <!-- Barra Superior: Estimado (Línea Base) -->
+                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between px-2 text-[10px] text-slate-300">
+                                    <span class="flex items-center gap-1 font-mono font-bold text-slate-400">
+                                        <i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d
+                                    </span>
+                                    <span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>
                                 </div>
-                            ` : `
-                                <!-- MODO NORMAL (ESTIMADO O REAL): TARJETA GANTT -->
-                                <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl p-2 shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-grab active:cursor-grabbing">
-                                    
-                                    <!-- Relleno de barra de progreso interna -->
-                                    <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all"
+
+                                <!-- Barra Inferior: Real en Terreno -->
+                                <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80">
+                                    <!-- Progreso real llenado -->
+                                    <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-gradient-to-r from-red-600 to-rose-500' : (task.progress >= 100 ? 'bg-gradient-to-r from-blue-600 to-cyan-500' : 'bg-gradient-to-r from-emerald-600 to-teal-500')} opacity-90 transition-all"
                                          style="width: ${task.progress || 0}%;"></div>
-
-                                    <!-- Cabecera de la tarjeta dentro de la barra -->
-                                    <div class="relative z-10 flex items-center justify-between gap-2">
-                                        <span class="text-[10px] font-bold text-slate-200 truncate">
-                                            ${task.name}
-                                        </span>
-                                        <span class="text-[10px] font-mono font-extrabold ${task.progress >= 100 ? 'text-blue-400' : 'text-emerald-400'}">
-                                            ${task.progress || 0}%
-                                        </span>
-                                    </div>
-
-                                    <!-- Footer de la barra con recursos -->
-                                    <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
-                                                <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
-                                            </span>
-                                            ${hasConflict ? `
-                                                <span class="flex items-center gap-0.5 text-red-400 font-bold animate-pulse" title="Conflicto de recursos en esta fecha">
-                                                    <i data-lucide="alert-circle" class="w-3 h-3"></i> Conflicto
+                                    
+                                    <!-- Texto superpuesto -->
+                                    <div class="relative z-10 w-full px-2 flex items-center justify-between text-[10px] font-bold text-white">
+                                        <span class="truncate pr-1">${task.name} (${task.progress || 0}%)</span>
+                                        <div class="flex items-center gap-1 font-mono text-[9px] flex-shrink-0">
+                                            ${deltaDays !== 0 ? `
+                                                <span class="px-1 rounded ${deltaDays > 0 ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'}">
+                                                    ${deltaDays > 0 ? `+${deltaDays}d` : `${deltaDays}d`}
+                                                </span>
+                                            ` : ''}
+                                            ${deltaHH !== 0 ? `
+                                                <span class="px-1 rounded ${deltaHH > 0 ? 'bg-red-900/80 text-red-200' : 'bg-emerald-900/80 text-emerald-200'}">
+                                                    ${deltaHH > 0 ? `+${deltaHH} HH` : `${deltaHH} HH`}
                                                 </span>
                                             ` : ''}
                                         </div>
-                                        <span class="text-[9px] bg-slate-900/60 px-1 rounded border border-slate-700/50">
-                                            ${task.durationDays} días
+                                    </div>
+                                </div>
+
+                            </div>
+                        ` : `
+                            <!-- MODO NORMAL (ESTIMADO O REAL): TARJETA GANTT -->
+                            <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl p-2 shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-pointer">
+                                
+                                <!-- Relleno de barra de progreso interna -->
+                                <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all"
+                                     style="width: ${task.progress || 0}%;"></div>
+
+                                <!-- Cabecera de la tarjeta dentro de la barra -->
+                                <div class="relative z-10 flex items-center justify-between gap-2">
+                                    <div class="flex items-center gap-1.5 truncate">
+                                        <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${discipline.badgeClass} border flex-shrink-0">
+                                            ${task.tag || 'TSK'}
+                                        </span>
+                                        <span class="text-xs font-bold text-slate-100 truncate" title="${task.name}">
+                                            ${task.name}
                                         </span>
                                     </div>
-
+                                    <span class="text-[10px] font-mono font-extrabold flex-shrink-0 ${task.progress >= 100 ? 'text-blue-400' : 'text-emerald-400'}">
+                                        ${task.progress || 0}%
+                                    </span>
                                 </div>
-                            `}
 
-                        </div>
-                    ` : `
-                        <div class="text-xs text-slate-500 italic pl-4">No asignada al calendario</div>
-                    `}
+                                <!-- Footer de la barra con recursos -->
+                                <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
+                                            <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
+                                        </span>
+                                        ${hasConflict ? `
+                                            <span class="flex items-center gap-0.5 text-red-400 font-bold animate-pulse" title="Conflicto de recursos en esta fecha">
+                                                <i data-lucide="alert-circle" class="w-3 h-3"></i> Conflicto
+                                            </span>
+                                        ` : ''}
+                                    </div>
+                                    <span class="text-[9px] bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/50 font-mono">
+                                        ${task.durationDays}d
+                                    </span>
+                                </div>
 
-                </div>
+                            </div>
+                        `}
+
+                    </div>
+                ` : `
+                    <div class="text-xs text-slate-500 italic pl-4">No asignada al calendario</div>
+                `}
 
             </div>
         `;
@@ -2108,9 +2088,10 @@ class TimelineRenderer {
     /**
      * Renderiza el Heatmap / Histograma de recursos diario
      */
-    renderResourceHeatmap(calendarDates, conflicts) {
+    renderResourceHeatmap(calendarDates, conflicts, totalTimelineWidth) {
         const daily = conflicts.dailyLoad || {};
         const limits = this.store.getActiveProject().resourceLimits || {};
+        const totalWidth = totalTimelineWidth || (calendarDates.length * this.columnWidth);
 
         // Recursos clave para vigilar
         const keyResources = [
@@ -2140,8 +2121,8 @@ class TimelineRenderer {
             });
 
             rowsHtml += `
-                <div class="flex items-center border-b border-slate-800/80 hover:bg-slate-800/20 transition-colors">
-                    <div class="w-72 flex-shrink-0 p-2.5 pl-3 border-r border-slate-700/80 bg-slate-900/95 sticky left-0 z-10 flex items-center justify-between text-xs text-slate-300 shadow-r">
+                <div class="border-b border-slate-800/80 hover:bg-slate-800/20 transition-colors" style="width: ${totalWidth}px;">
+                    <div class="px-3 py-1 bg-slate-900/95 sticky left-0 z-10 inline-flex items-center gap-2 text-xs text-slate-300 border-r border-b border-slate-700/60 rounded-br-lg">
                         <span class="flex items-center gap-1.5 font-medium">
                             <i data-lucide="${res.icon}" class="w-3.5 h-3.5 text-${res.color}-400"></i> ${res.label}
                         </span>
@@ -2153,8 +2134,8 @@ class TimelineRenderer {
         });
 
         return `
-            <div class="mt-6 pt-3 border-t-2 border-slate-700/80 bg-slate-900/80 rounded-xl overflow-hidden shadow-inner">
-                <div class="p-3 bg-slate-900 flex items-center justify-between border-b border-slate-800">
+            <div class="mt-6 pt-3 border-t-2 border-slate-700/80 bg-slate-900/80 rounded-xl overflow-hidden shadow-inner" style="width: ${totalWidth}px;">
+                <div class="p-3 bg-slate-900 flex items-center justify-between border-b border-slate-800 sticky left-0">
                     <div class="flex items-center gap-2">
                         <i data-lucide="bar-chart-3" class="w-4 h-4 text-amber-400"></i>
                         <h4 class="text-xs font-bold text-slate-200 uppercase tracking-wider">Histograma de Carga y Capacidad Diaria de Recursos</h4>
@@ -4660,9 +4641,11 @@ class AppController {
                 if (isHidden) {
                     backlogSidebar.classList.remove('hidden');
                     backlogSidebar.classList.add('flex');
+                    btnToggleBacklogReal.classList.add('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
                 } else {
                     backlogSidebar.classList.add('hidden');
                     backlogSidebar.classList.remove('flex');
+                    btnToggleBacklogReal.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
                 }
             });
         }
@@ -4672,10 +4655,13 @@ class AppController {
             btnCloseBacklog.addEventListener('click', () => {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('flex');
+                if (btnToggleBacklogReal) {
+                    btnToggleBacklogReal.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
+                }
             });
         }
 
-        // Toggle Gaveta Lateral de Tareas de Montaje (Lateral Derecho en Tab Real)
+        // Toggle Gaveta Lateral de Tareas de Montaje (Accesible en las 3 pestañas)
         const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
         const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
         if (btnToggleTasksSidebar && montageTasksSidebar) {
@@ -4684,9 +4670,11 @@ class AppController {
                 if (isHidden) {
                     montageTasksSidebar.classList.remove('hidden');
                     montageTasksSidebar.classList.add('flex');
+                    btnToggleTasksSidebar.classList.add('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
                 } else {
                     montageTasksSidebar.classList.add('hidden');
                     montageTasksSidebar.classList.remove('flex');
+                    btnToggleTasksSidebar.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
                 }
             });
         }
@@ -4696,6 +4684,9 @@ class AppController {
             btnCloseMontage.addEventListener('click', () => {
                 montageTasksSidebar.classList.add('hidden');
                 montageTasksSidebar.classList.remove('flex');
+                if (btnToggleTasksSidebar) {
+                    btnToggleTasksSidebar.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+                }
             });
         }
 
@@ -4709,6 +4700,13 @@ class AppController {
                 }
             });
         }
+
+        // Delegación de eventos para botones globales
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.modals.activeModal) {
+                this.modals.closeModal();
+            }
+        });
     }
 
     /**
@@ -4768,51 +4766,49 @@ class AppController {
         const btnToggleBacklog = document.getElementById('btn-toggle-backlog-real') || document.getElementById('btn-toggle-backlog');
         const btnToggleTasks = document.getElementById('btn-toggle-tasks-sidebar');
 
+        // El botón de Tareas Montaje permanece SIEMPRE disponible en las 3 pestañas
+        if (btnToggleTasks) {
+            btnToggleTasks.classList.remove('hidden');
+            btnToggleTasks.classList.add('flex');
+            btnToggleTasks.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+        }
+
+        // Por defecto, las gavetas inician ocultas para mostrar únicamente el calendario completo
+        if (montageSidebar) {
+            montageSidebar.classList.add('hidden');
+            montageSidebar.classList.remove('flex');
+        }
+
         if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar totalmente las gavetas y sus botones conmutadores
+            // Pestaña Estimado: Ocultar bandeja de pendientes
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('lg:flex', 'flex');
-            }
-            if (montageSidebar) {
-                montageSidebar.classList.add('hidden');
-                montageSidebar.classList.remove('flex');
+                backlogSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
             }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.add('hidden');
-                btnToggleTasks.classList.remove('flex');
-            }
         } else if (activeTab === 'real') {
-            // Pestaña Real: Mostrar botones conmutadores de gavetas para gestión en campo
+            // Pestaña Real: Permitir abrir bandeja de pendientes
+            if (backlogSidebar) {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('flex');
+            }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');
-            }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.remove('hidden');
-                btnToggleTasks.classList.add('flex');
+                btnToggleBacklog.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
             }
         } else if (activeTab === 'comparativa') {
-            // Pestaña Comparativa: Ocultar gavetas para maximizar la comparación visual en pantalla completa
+            // Pestaña Comparativa: Ocultar bandeja de pendientes
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('lg:flex', 'flex');
-            }
-            if (montageSidebar) {
-                montageSidebar.classList.add('hidden');
-                montageSidebar.classList.remove('flex');
+                backlogSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
-            }
-            if (btnToggleTasks) {
-                btnToggleTasks.classList.add('hidden');
-                btnToggleTasks.classList.remove('flex');
             }
         }
 
