@@ -6,13 +6,15 @@ import { DISCIPLINES } from './mockData.js';
 import { getDatesRange, calculateEndDate } from './conflictEngine.js';
 
 export class TimelineRenderer {
-    constructor(store, containerId, backlogContainerId) {
+    constructor(store, containerId, backlogContainerId, montageContainerId = 'montage-tasks-cards-container') {
         this.store = store;
         this.container = document.getElementById(containerId);
         this.backlogContainer = document.getElementById(backlogContainerId);
+        this.montageContainer = document.getElementById(montageContainerId);
         this.columnWidth = 90; // Ancho en px de cada columna diaria en desktop
         this.todayStr = '2026-09-08'; // Fecha simulada de corte de obra
         this.draggedTaskId = null;
+        this.montageSearchQuery = '';
 
         this.initEvents();
     }
@@ -39,6 +41,26 @@ export class TimelineRenderer {
                 }
             });
         }
+
+        // Buscador interno en barra lateral de montaje
+        const searchMontageInput = document.getElementById('input-search-montage-sidebar');
+        if (searchMontageInput) {
+            searchMontageInput.addEventListener('input', (e) => {
+                this.montageSearchQuery = e.target.value.toLowerCase().trim();
+                const project = this.store.getActiveProject();
+                if (project) this.renderMontageTasksSidebar(project.tasks || []);
+            });
+        }
+    }
+
+    formatDate(dateStr) {
+        const d = new Date(dateStr + 'T00:00:00');
+        const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+        const dayName = days[d.getDay()];
+        const dayNum = String(d.getDate()).padStart(2, '0');
+        const monthName = months[d.getMonth()];
+        return { dayName, dayNum, monthName, full: `${dayName} ${dayNum} ${monthName}` };
     }
 
     /**
@@ -56,7 +78,7 @@ export class TimelineRenderer {
     }
 
     /**
-     * Render principal del Timeline y Backlog
+     * Render principal del Timeline, Backlog y Barra de Montaje
      */
     render() {
         const project = this.store.getActiveProject();
@@ -75,8 +97,122 @@ export class TimelineRenderer {
         // 2. Renderizar la Bandeja de Pendientes
         this.renderBacklog(project.backlog || [], conflicts);
 
-        // 3. Renderizar el Timeline Principal
+        // 3. Renderizar la Barra Lateral de Tareas de Montaje
+        this.renderMontageTasksSidebar(project.tasks || []);
+
+        // 4. Renderizar el Timeline Principal
         this.renderTimelineGrid(calendarDates, project.tasks || [], conflicts, currentTab);
+    }
+
+    /**
+     * Renderiza las tareas de montaje en la gaveta lateral derecha (Pestaña Real)
+     */
+    renderMontageTasksSidebar(tasks) {
+        if (!this.montageContainer) {
+            this.montageContainer = document.getElementById('montage-tasks-cards-container');
+        }
+        if (!this.montageContainer) return;
+
+        const disciplines = this.store.getDisciplines();
+
+        let filtered = [...tasks];
+        if (this.montageSearchQuery) {
+            filtered = filtered.filter(t => 
+                (t.name && t.name.toLowerCase().includes(this.montageSearchQuery)) ||
+                (t.tag && t.tag.toLowerCase().includes(this.montageSearchQuery)) ||
+                (t.discipline && t.discipline.toLowerCase().includes(this.montageSearchQuery))
+            );
+        }
+
+        if (filtered.length === 0) {
+            this.montageContainer.innerHTML = `
+                <div class="p-6 text-center text-slate-400 text-xs border border-dashed border-slate-700/60 rounded-xl my-2">
+                    <i data-lucide="clipboard-list" class="w-8 h-8 mx-auto mb-2 text-slate-500 opacity-60"></i>
+                    No se encontraron tareas de montaje.
+                </div>
+            `;
+            if (window.lucide) window.lucide.createIcons();
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(task => {
+            const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: task.discipline, badgeClass: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' };
+            const progress = task.progress || 0;
+            const isCompleted = task.status === 'completed' || progress >= 100;
+            const isDelayed = task.status === 'delayed';
+
+            const statusBadge = isCompleted 
+                ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Lista</span>'
+                : (isDelayed 
+                    ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">Atrasada</span>'
+                    : '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">En Obra</span>');
+
+            html += `
+                <div class="bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 hover:border-cyan-500/60 rounded-xl p-3 shadow-md transition-all">
+                    <div class="flex items-center justify-between gap-1.5 mb-1.5">
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded ${discipline.badgeClass} border font-semibold truncate max-w-[150px]">
+                            ${task.tag ? `${task.tag} • ` : ''}${discipline.name.split(' ')[0]}
+                        </span>
+                        ${statusBadge}
+                    </div>
+
+                    <h4 class="text-xs font-bold text-white mb-1.5 leading-snug line-clamp-2" title="${task.name}">
+                        ${task.name}
+                    </h4>
+
+                    <!-- Barra de avance físico -->
+                    <div class="mb-2.5">
+                        <div class="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+                            <span>Avance Físico</span>
+                            <span class="font-bold text-white">${progress}%</span>
+                        </div>
+                        <div class="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" style="width: ${progress}%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Fechas y Duración -->
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 mb-2.5 font-mono">
+                        <span class="flex items-center gap-1">
+                            <i data-lucide="calendar" class="w-3 h-3 text-slate-500"></i> ${task.realStart || task.estimatedStart || 'S/D'}
+                        </span>
+                        <span class="text-slate-300 font-bold">${task.durationDays}d</span>
+                    </div>
+
+                    <!-- Botones de Acción Rápida -->
+                    <div class="flex items-center gap-1.5 pt-1 border-t border-slate-700/60">
+                        <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
+                            <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
+                        </button>
+                        <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
+                            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        this.montageContainer.innerHTML = html;
+
+        // Listeners de los botones dentro de la barra
+        this.montageContainer.querySelectorAll('.btn-sidebar-dailylog').forEach(b => {
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = b.dataset.taskId;
+                if (window.appModals) window.appModals.openDailyLogModal(tid);
+            });
+        });
+
+        this.montageContainer.querySelectorAll('.btn-sidebar-edittask').forEach(b => {
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = b.dataset.taskId;
+                if (window.appModals) window.appModals.openTaskEditor(tid);
+            });
+        });
+
+        if (window.lucide) window.lucide.createIcons();
     }
 
     /**
@@ -87,6 +223,10 @@ export class TimelineRenderer {
 
         const isSupervision = this.store.state.isSupervisionMode;
         const filtered = this.filterTasks(backlogTasks);
+        const disciplines = this.store.getDisciplines();
+
+        const badgeReal = document.getElementById('backlog-count-badge-real');
+        if (badgeReal) badgeReal.textContent = filtered.length;
 
         if (filtered.length === 0) {
             this.backlogContainer.innerHTML = `
@@ -101,7 +241,7 @@ export class TimelineRenderer {
 
         let html = '';
         filtered.forEach(task => {
-            const discipline = DISCIPLINES.find(d => d.id === task.discipline) || DISCIPLINES[0];
+            const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: task.discipline, badgeClass: 'bg-amber-500/10 text-amber-400 border-amber-500/30' };
             const totalHH = task.labor ? Object.values(task.labor).reduce((a, b) => a + (parseFloat(b) || 0), 0) : 0;
             const hasHeavyMach = task.machinery && (task.machinery.grua_50t || task.machinery.hidrogrua);
 
@@ -325,7 +465,8 @@ export class TimelineRenderer {
      * Renderiza el carril de una tarea con su barra o doble barra (en Comparativa)
      */
     renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex) {
-        const discipline = DISCIPLINES.find(d => d.id === task.discipline) || DISCIPLINES[0];
+        const disciplines = this.store.getDisciplines();
+        const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: 'General', badgeClass: 'bg-slate-700 text-slate-300' };
         const taskConflictList = conflicts.taskConflicts ? conflicts.taskConflicts[task.id] : null;
         const hasConflict = taskConflictList && taskConflictList.length > 0;
 

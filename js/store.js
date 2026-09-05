@@ -2,7 +2,7 @@
 // STORE: GESTIÓN DE ESTADO REACTIVO, PERSISTENCIA Y CÁLCULOS KPI
 // ==========================================================================
 
-import { INITIAL_PROJECTS, RESOURCE_CATALOG } from './mockData.js';
+import { INITIAL_PROJECTS, RESOURCE_CATALOG, DISCIPLINES } from './mockData.js';
 import { analyzeResourceConflicts, calculateEndDate, getResourceMeta } from './conflictEngine.js';
 
 const STORAGE_KEY = 'MONTAJE_PRO_STATE_V1';
@@ -22,7 +22,13 @@ class ProjectStore {
                 status: 'all',
                 showHeatmap: true
             },
-            selectedTaskId: null
+            selectedTaskId: null,
+            catalogs: {
+                labor: [],
+                machinery: [],
+                equipment: []
+            },
+            disciplines: []
         };
 
         this.listeners = [];
@@ -56,7 +62,9 @@ class ProjectStore {
         try {
             const dataToSave = {
                 projects: this.state.projects,
-                currentProjectId: this.state.currentProjectId
+                currentProjectId: this.state.currentProjectId,
+                catalogs: this.state.catalogs,
+                disciplines: this.state.disciplines
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
         } catch (e) {
@@ -68,6 +76,8 @@ class ProjectStore {
         if (typeof localStorage === 'undefined') {
             this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
             this.state.currentProjectId = this.state.projects[0].id;
+            this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+            this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
             return;
         }
         try {
@@ -77,8 +87,10 @@ class ProjectStore {
                 if (parsed.projects && parsed.projects.length > 0) {
                     this.state.projects = parsed.projects;
                     this.state.currentProjectId = parsed.currentProjectId || parsed.projects[0].id;
-                    return;
                 }
+                this.state.catalogs = parsed.catalogs || JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+                this.state.disciplines = parsed.disciplines || JSON.parse(JSON.stringify(DISCIPLINES));
+                return;
             }
         } catch (e) {
             console.warn('Cargando proyectos por defecto tras error en localStorage:', e);
@@ -86,6 +98,8 @@ class ProjectStore {
         // Si no hay datos guardados, cargar los mock iniciales
         this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
         this.state.currentProjectId = this.state.projects[0].id;
+        this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+        this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
     }
 
     // Sincronización con Hash de la URL para compartir enlaces y modo supervisión
@@ -163,7 +177,7 @@ class ProjectStore {
     getConflicts() {
         const project = this.getActiveProject();
         if (!project) return { conflictsByDate: {}, taskConflicts: {}, dailyLoad: {}, totalConflictsCount: 0 };
-        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated');
+        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
     }
 
     // Cálculo exhaustivo de KPIs (HH, Costo, Avance Ponderado, EVM)
@@ -172,6 +186,7 @@ class ProjectStore {
         if (!project) return null;
 
         const tasks = project.tasks || [];
+        const catalogs = this.getCatalogs();
         let totalEstimatedHH = 0;
         let totalRealHH = 0;
         let totalEstimatedCost = 0;
@@ -190,7 +205,7 @@ class ProjectStore {
                 Object.entries(t.labor).forEach(([resId, hh]) => {
                     const h = parseFloat(hh) || 0;
                     taskEstHH += h;
-                    const meta = getResourceMeta(resId);
+                    const meta = getResourceMeta(resId, catalogs);
                     totalEstimatedCost += h * (meta.hourlyRate || 30);
                 });
             }
@@ -203,7 +218,7 @@ class ProjectStore {
                 Object.entries(laborToUse).forEach(([resId, hh]) => {
                     const h = parseFloat(hh) || 0;
                     taskRealHH += h;
-                    const meta = getResourceMeta(resId);
+                    const meta = getResourceMeta(resId, catalogs);
                     totalRealCost += h * (meta.hourlyRate || 30);
                 });
             }
@@ -213,7 +228,7 @@ class ProjectStore {
             if (t.machinery) {
                 Object.entries(t.machinery).forEach(([mId, hrs]) => {
                     const h = parseFloat(hrs) || 0;
-                    const meta = getResourceMeta(mId);
+                    const meta = getResourceMeta(mId, catalogs);
                     totalEstimatedMachineryCost += h * (meta.hourlyRate || 100);
                 });
             }
@@ -221,7 +236,7 @@ class ProjectStore {
             if (machToUse) {
                 Object.entries(machToUse).forEach(([mId, hrs]) => {
                     const h = parseFloat(hrs) || 0;
-                    const meta = getResourceMeta(mId);
+                    const meta = getResourceMeta(mId, catalogs);
                     totalRealMachineryCost += h * (meta.hourlyRate || 100);
                 });
             }
@@ -308,19 +323,23 @@ class ProjectStore {
         const allTasks = [...(project.tasks || []), ...(project.backlog || [])];
         const resourceMap = {};
 
-        // Inicializar catálogo completo
+        const catalogs = this.getCatalogs();
+
+        // Inicializar catálogo dinámico completo
         ['labor', 'machinery', 'equipment'].forEach(category => {
-            RESOURCE_CATALOG[category].forEach(res => {
-                resourceMap[res.id] = {
-                    id: res.id,
-                    name: res.name,
-                    category,
-                    unit: res.unit,
-                    hourlyRate: res.hourlyRate || res.dailyRate || 25,
-                    estimated: 0,
-                    real: 0
-                };
-            });
+            if (catalogs[category]) {
+                catalogs[category].forEach(res => {
+                    resourceMap[res.id] = {
+                        id: res.id,
+                        name: res.name,
+                        category,
+                        unit: res.unit,
+                        hourlyRate: res.hourlyRate || res.dailyRate || 25,
+                        estimated: 0,
+                        real: 0
+                    };
+                });
+            }
         });
 
         // Acumular de las tareas
@@ -611,11 +630,115 @@ class ProjectStore {
         this.notify();
     }
 
+    // ======================================================================
+    // GESTIÓN DE CATÁLOGOS CRUD (EQUIPOS, MANO DE OBRA Y DISCIPLINAS)
+    // ======================================================================
+
+    getCatalogs() {
+        return this.state.catalogs || RESOURCE_CATALOG;
+    }
+
+    getDisciplines() {
+        return this.state.disciplines || DISCIPLINES;
+    }
+
+    isResourceInUse(resourceId) {
+        for (const p of this.state.projects) {
+            const allTasks = [...(p.tasks || []), ...(p.backlog || [])];
+            for (const t of allTasks) {
+                if (t.labor && t.labor[resourceId] > 0) return true;
+                if (t.realLabor && t.realLabor[resourceId] > 0) return true;
+                if (t.machinery && t.machinery[resourceId] > 0) return true;
+                if (t.realMachinery && t.realMachinery[resourceId] > 0) return true;
+                if (t.equipment && t.equipment[resourceId] > 0) return true;
+            }
+        }
+        return false;
+    }
+
+    isDisciplineInUse(discId) {
+        for (const p of this.state.projects) {
+            const allTasks = [...(p.tasks || []), ...(p.backlog || [])];
+            if (allTasks.some(t => t.discipline === discId)) return true;
+        }
+        return false;
+    }
+
+    addCatalogItem(category, item) {
+        if (this.state.isSupervisionMode) return null;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return null;
+        if (!this.state.catalogs[category]) this.state.catalogs[category] = [];
+
+        if (!item.id) {
+            item.id = (item.name || 'recurso').toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.floor(100 + Math.random() * 900);
+        }
+        this.state.catalogs[category].push(item);
+        this.notify();
+        return item;
+    }
+
+    updateCatalogItem(category, itemId, updates) {
+        if (this.state.isSupervisionMode) return null;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return null;
+        const list = this.state.catalogs[category];
+        const idx = list.findIndex(r => r.id === itemId);
+        if (idx !== -1) {
+            list[idx] = { ...list[idx], ...updates };
+            this.notify();
+            return list[idx];
+        }
+        return null;
+    }
+
+    deleteCatalogItem(category, itemId) {
+        if (this.state.isSupervisionMode) return false;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return false;
+        this.state.catalogs[category] = this.state.catalogs[category].filter(r => r.id !== itemId);
+        this.notify();
+        return true;
+    }
+
+    addDiscipline(disc) {
+        if (this.state.isSupervisionMode) return null;
+        if (!disc.id) {
+            disc.id = (disc.name || 'disc').toLowerCase().replace(/[^a-z0-9]/g, '_');
+        }
+        const color = disc.color || 'blue';
+        if (!disc.badgeClass) {
+            disc.badgeClass = `bg-${color}-500/10 text-${color}-400 border-${color}-500/30`;
+        }
+        this.state.disciplines.push(disc);
+        this.notify();
+        return disc;
+    }
+
+    updateDiscipline(discId, updates) {
+        if (this.state.isSupervisionMode) return null;
+        const idx = this.state.disciplines.findIndex(d => d.id === discId);
+        if (idx !== -1) {
+            const color = updates.color || this.state.disciplines[idx].color || 'blue';
+            updates.badgeClass = `bg-${color}-500/10 text-${color}-400 border-${color}-500/30`;
+            this.state.disciplines[idx] = { ...this.state.disciplines[idx], ...updates };
+            this.notify();
+            return this.state.disciplines[idx];
+        }
+        return null;
+    }
+
+    deleteDiscipline(discId) {
+        if (this.state.isSupervisionMode) return false;
+        this.state.disciplines = this.state.disciplines.filter(d => d.id !== discId);
+        this.notify();
+        return true;
+    }
+
     // Resetear a datos iniciales de fábrica
     resetToDefault() {
-        localStorage.removeItem(STORAGE_KEY);
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY);
         this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
         this.state.currentProjectId = this.state.projects[0].id;
+        this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+        this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
         this.notify();
     }
 }

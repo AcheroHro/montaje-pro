@@ -36,12 +36,18 @@ class AppController {
         }
 
         // Inicializar selector de filtro de disciplinas
+        this.updateDisciplineFilter();
+    }
+
+    updateDisciplineFilter() {
         const discFilter = document.getElementById('filter-discipline');
         if (discFilter) {
+            const currentVal = discFilter.value || 'all';
             discFilter.innerHTML = `
                 <option value="all">Todas las disciplinas</option>
-                ${DISCIPLINES.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                ${this.store.getDisciplines().map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
             `;
+            discFilter.value = currentVal;
         }
     }
 
@@ -151,13 +157,59 @@ class AppController {
             });
         }
 
-        // Toggle Bandeja de Pendientes (Móvil / Colapsable)
-        const toggleDrawerBtn = document.getElementById('btn-toggle-backlog');
+        // Botón Gestionar Catálogo (Mano de Obra, Equipos y Disciplinas)
+        const btnCatalog = document.getElementById('btn-open-catalog');
+        if (btnCatalog) {
+            btnCatalog.addEventListener('click', () => {
+                this.modals.openCatalogManagerModal();
+            });
+        }
+
+        // Toggle Bandeja de Pendientes (Lateral Izquierdo en Tab Real)
+        const btnToggleBacklogReal = document.getElementById('btn-toggle-backlog-real');
         const backlogSidebar = document.getElementById('backlog-sidebar');
-        if (toggleDrawerBtn && backlogSidebar) {
-            toggleDrawerBtn.addEventListener('click', () => {
-                backlogSidebar.classList.toggle('hidden');
-                backlogSidebar.classList.toggle('flex');
+        if (btnToggleBacklogReal && backlogSidebar) {
+            btnToggleBacklogReal.addEventListener('click', () => {
+                const isHidden = backlogSidebar.classList.contains('hidden');
+                if (isHidden) {
+                    backlogSidebar.classList.remove('hidden');
+                    backlogSidebar.classList.add('flex');
+                } else {
+                    backlogSidebar.classList.add('hidden');
+                    backlogSidebar.classList.remove('flex');
+                }
+            });
+        }
+
+        const btnCloseBacklog = document.getElementById('btn-close-backlog-sidebar');
+        if (btnCloseBacklog && backlogSidebar) {
+            btnCloseBacklog.addEventListener('click', () => {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('flex');
+            });
+        }
+
+        // Toggle Gaveta Lateral de Tareas de Montaje (Lateral Derecho en Tab Real)
+        const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
+        const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
+        if (btnToggleTasksSidebar && montageTasksSidebar) {
+            btnToggleTasksSidebar.addEventListener('click', () => {
+                const isHidden = montageTasksSidebar.classList.contains('hidden');
+                if (isHidden) {
+                    montageTasksSidebar.classList.remove('hidden');
+                    montageTasksSidebar.classList.add('flex');
+                } else {
+                    montageTasksSidebar.classList.add('hidden');
+                    montageTasksSidebar.classList.remove('flex');
+                }
+            });
+        }
+
+        const btnCloseMontage = document.getElementById('btn-close-montage-sidebar');
+        if (btnCloseMontage && montageTasksSidebar) {
+            btnCloseMontage.addEventListener('click', () => {
+                montageTasksSidebar.classList.add('hidden');
+                montageTasksSidebar.classList.remove('flex');
             });
         }
 
@@ -178,6 +230,7 @@ class AppController {
      */
     render(state) {
         this.updateProjectHeader(state);
+        this.updateDisciplineFilter();
         this.updateTabsUI(state.currentTab);
         this.updateSupervisionBanner(state.isSupervisionMode);
         this.updateKPIDashboard();
@@ -223,39 +276,57 @@ class AppController {
             }
         });
 
-        // Control de visibilidad de la Bandeja Lateral de Pendientes según la pestaña
+        // Control de visibilidad de las Gavetas Laterales según la pestaña
         const backlogSidebar = document.getElementById('backlog-sidebar');
-        const btnToggleBacklog = document.getElementById('btn-toggle-backlog');
+        const montageSidebar = document.getElementById('montage-tasks-sidebar');
+        const btnToggleBacklog = document.getElementById('btn-toggle-backlog-real') || document.getElementById('btn-toggle-backlog');
+        const btnToggleTasks = document.getElementById('btn-toggle-tasks-sidebar');
 
         if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar totalmente la bandeja de tareas, solo mostrar el calendario limpio a pantalla completa
+            // Pestaña Estimado: Ocultar totalmente las gavetas y sus botones conmutadores
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('lg:flex', 'flex');
+            }
+            if (montageSidebar) {
+                montageSidebar.classList.add('hidden');
+                montageSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
             }
-        } else if (activeTab === 'real') {
-            // Pestaña Real: Permitir bandeja de pendientes para gestión operativa en terreno
-            if (backlogSidebar) {
-                backlogSidebar.classList.remove('hidden');
-                backlogSidebar.classList.add('lg:flex');
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.add('hidden');
+                btnToggleTasks.classList.remove('flex');
             }
+        } else if (activeTab === 'real') {
+            // Pestaña Real: Mostrar botones conmutadores de gavetas para gestión en campo
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');
             }
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.remove('hidden');
+                btnToggleTasks.classList.add('flex');
+            }
         } else if (activeTab === 'comparativa') {
-            // Pestaña Comparativa: Ocultar bandeja para maximizar la comparación visual en pantalla completa
+            // Pestaña Comparativa: Ocultar gavetas para maximizar la comparación visual en pantalla completa
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('lg:flex', 'flex');
             }
+            if (montageSidebar) {
+                montageSidebar.classList.add('hidden');
+                montageSidebar.classList.remove('flex');
+            }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
+            }
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.add('hidden');
+                btnToggleTasks.classList.remove('flex');
             }
         }
 

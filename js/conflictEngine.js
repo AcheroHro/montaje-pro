@@ -35,10 +35,13 @@ export function calculateEndDate(startDateStr, durationDays) {
 /**
  * Busca metadatos de un recurso en el catálogo (labor, machinery, equipment)
  */
-export function getResourceMeta(resourceId) {
+export function getResourceMeta(resourceId, customCatalog = null) {
+    const cat = customCatalog || RESOURCE_CATALOG;
     for (const group of ['labor', 'machinery', 'equipment']) {
-        const found = RESOURCE_CATALOG[group].find(r => r.id === resourceId);
-        if (found) return { ...found, category: group };
+        if (cat[group]) {
+            const found = cat[group].find(r => r.id === resourceId);
+            if (found) return { ...found, category: group };
+        }
     }
     return { id: resourceId, name: resourceId, unit: 'u', hourlyRate: 25, defaultLimit: 5, category: 'labor' };
 }
@@ -50,9 +53,10 @@ export function getResourceMeta(resourceId) {
  * @param {Array} tasks - Lista de tareas del proyecto
  * @param {Object} resourceLimits - Límites diarios definidos para el proyecto
  * @param {'estimated'|'real'} mode - Modo de análisis ('estimated' o 'real')
+ * @param {Object} customCatalog - Catálogo dinámico opcional
  * @returns {Object} { conflictsByDate, taskConflicts, dailyLoad, totalConflictsCount }
  */
-export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated') {
+export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null) {
     const dailyLoad = {}; // date -> { resourceId: { total: number, tasks: [taskId] } }
     const conflictsByDate = {}; // date -> [ { resourceId, name, unit, required, limit, excess, taskIds } ]
     const taskConflicts = {}; // taskId -> [ { date, resourceId, resourceName, required, limit, conflictingWithTaskIds } ]
@@ -130,7 +134,7 @@ export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'est
 
     Object.entries(dailyLoad).forEach(([date, resources]) => {
         Object.entries(resources).forEach(([resId, data]) => {
-            const meta = getResourceMeta(resId);
+            const meta = getResourceMeta(resId, customCatalog);
             const limit = (resourceLimits && resourceLimits[resId] !== undefined) 
                 ? resourceLimits[resId] 
                 : (meta.defaultLimit || 5);

@@ -79,6 +79,12 @@
                     <span class="hidden sm:inline">Balance</span> Recursos
                 </button>
 
+                <!-- Botón Catálogo de Recursos y Disciplinas -->
+                <button id="btn-open-catalog" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all" title="Gestionar catálogo de equipos, mano de obra y disciplinas">
+                    <i data-lucide="sliders" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>Catálogo</span>
+                </button>
+
                 <!-- Botón Informe Ejecutivo Imprimible -->
                 <button id="btn-open-print-report" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all" title="Generar informe imprimible / PDF de la obra">
                     <i data-lucide="printer" class="w-3.5 h-3.5 text-cyan-400"></i>
@@ -263,10 +269,15 @@
                     <span class="hidden md:inline">Histograma</span>
                 </button>
 
-                <!-- Botón móvil para mostrar/ocultar bandeja de pendientes -->
-                <button id="btn-toggle-backlog" class="hidden p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold items-center gap-1">
+                <!-- Conmutadores Laterales para Pestaña Real (Pendientes y Tareas de Montaje) -->
+                <button id="btn-toggle-backlog-real" class="hidden px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold items-center gap-1.5 transition-all" title="Mostrar/Ocultar Bandeja Lateral de Pendientes">
                     <i data-lucide="inbox" class="w-4 h-4"></i>
-                    <span>Pendientes (<span id="backlog-count-badge">0</span>)</span>
+                    <span>Pendientes (<span id="backlog-count-badge-real">0</span>)</span>
+                </button>
+
+                <button id="btn-toggle-tasks-sidebar" class="hidden px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 text-xs font-semibold items-center gap-1.5 transition-all" title="Mostrar/Ocultar Gaveta Lateral de Tareas de Montaje">
+                    <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+                    <span>Tareas Montaje</span>
                 </button>
             </div>
 
@@ -279,12 +290,12 @@
     </nav>
 
     <!-- ====================================================================
-         4. CUERPO PRINCIPAL: BANDEJA DE PENDIENTES + LÍNEA DE TIEMPO INTERACTIVA
+         4. CUERPO PRINCIPAL: GAVETAS LATERALES + LÍNEA DE TIEMPO INTERACTIVA
          ==================================================================== -->
     <main class="flex-grow flex overflow-hidden relative">
         
-        <!-- BANDEJA LATERAL DE PENDIENTES (ÁREA DE PENDIENTES / BACKLOG) -->
-        <aside id="backlog-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 p-3 hidden flex-col z-30 transition-all">
+        <!-- GAVETA LATERAL IZQUIERDA: BANDEJA DE PENDIENTES (SLIDE-IN / COLLAPSIBLE) -->
+        <aside id="backlog-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 p-3 hidden flex-col z-30 transition-all shadow-xl">
             
             <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
@@ -296,9 +307,9 @@
                         <p class="text-[10px] text-slate-400">Sin fecha de inicio asignada</p>
                     </div>
                 </div>
-                <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700">
-                    Bandeja
-                </span>
+                <button id="btn-close-backlog-sidebar" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" title="Ocultar barra de pendientes">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
             </div>
 
             <div class="bg-slate-950/60 p-2 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 mb-3 flex items-start gap-1.5">
@@ -319,6 +330,34 @@
                 <!-- Se puebla desde TimelineRenderer.renderTimelineGrid() -->
             </div>
         </section>
+
+        <!-- GAVETA LATERAL DERECHA: TAREAS DE MONTAJE (TAB REAL - SLIDE-IN / COLLAPSIBLE) -->
+        <aside id="montage-tasks-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-l border-slate-800 p-3 hidden flex-col z-30 transition-all shadow-xl">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                        <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-bold text-white uppercase tracking-wider">Tareas de Montaje</h3>
+                        <p class="text-[10px] text-slate-400">Seguimiento en Terreno</p>
+                    </div>
+                </div>
+                <button id="btn-close-montage-sidebar" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" title="Ocultar barra de tareas de montaje">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- Buscador rápido en barra lateral de montaje -->
+            <div class="mb-2">
+                <input type="text" id="input-search-montage-sidebar" placeholder="Buscar en lista de montaje..." class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500">
+            </div>
+
+            <!-- Contenedor scrollable de tarjetas de tareas de montaje -->
+            <div id="montage-tasks-cards-container" class="flex-grow overflow-y-auto space-y-2.5 pr-1 custom-scrollbar">
+                <!-- Se puebla dinámicamente con TimelineRenderer.renderMontageTasksSidebar() -->
+            </div>
+        </aside>
 
     </main>
 

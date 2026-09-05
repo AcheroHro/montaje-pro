@@ -400,10 +400,13 @@ function calculateEndDate(startDateStr, durationDays) {
 /**
  * Busca metadatos de un recurso en el catálogo (labor, machinery, equipment)
  */
-function getResourceMeta(resourceId) {
+function getResourceMeta(resourceId, customCatalog = null) {
+    const cat = customCatalog || RESOURCE_CATALOG;
     for (const group of ['labor', 'machinery', 'equipment']) {
-        const found = RESOURCE_CATALOG[group].find(r => r.id === resourceId);
-        if (found) return { ...found, category: group };
+        if (cat[group]) {
+            const found = cat[group].find(r => r.id === resourceId);
+            if (found) return { ...found, category: group };
+        }
     }
     return { id: resourceId, name: resourceId, unit: 'u', hourlyRate: 25, defaultLimit: 5, category: 'labor' };
 }
@@ -415,9 +418,10 @@ function getResourceMeta(resourceId) {
  * @param {Array} tasks - Lista de tareas del proyecto
  * @param {Object} resourceLimits - Límites diarios definidos para el proyecto
  * @param {'estimated'|'real'} mode - Modo de análisis ('estimated' o 'real')
+ * @param {Object} customCatalog - Catálogo dinámico opcional
  * @returns {Object} { conflictsByDate, taskConflicts, dailyLoad, totalConflictsCount }
  */
-function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated') {
+function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null) {
     const dailyLoad = {}; // date -> { resourceId: { total: number, tasks: [taskId] } }
     const conflictsByDate = {}; // date -> [ { resourceId, name, unit, required, limit, excess, taskIds } ]
     const taskConflicts = {}; // taskId -> [ { date, resourceId, resourceName, required, limit, conflictingWithTaskIds } ]
@@ -495,7 +499,7 @@ function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated'
 
     Object.entries(dailyLoad).forEach(([date, resources]) => {
         Object.entries(resources).forEach(([resId, data]) => {
-            const meta = getResourceMeta(resId);
+            const meta = getResourceMeta(resId, customCatalog);
             const limit = (resourceLimits && resourceLimits[resId] !== undefined) 
                 ? resourceLimits[resId] 
                 : (meta.defaultLimit || 5);
@@ -725,7 +729,13 @@ class ProjectStore {
                 status: 'all',
                 showHeatmap: true
             },
-            selectedTaskId: null
+            selectedTaskId: null,
+            catalogs: {
+                labor: [],
+                machinery: [],
+                equipment: []
+            },
+            disciplines: []
         };
 
         this.listeners = [];
@@ -759,7 +769,9 @@ class ProjectStore {
         try {
             const dataToSave = {
                 projects: this.state.projects,
-                currentProjectId: this.state.currentProjectId
+                currentProjectId: this.state.currentProjectId,
+                catalogs: this.state.catalogs,
+                disciplines: this.state.disciplines
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
         } catch (e) {
@@ -771,6 +783,8 @@ class ProjectStore {
         if (typeof localStorage === 'undefined') {
             this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
             this.state.currentProjectId = this.state.projects[0].id;
+            this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+            this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
             return;
         }
         try {
@@ -780,8 +794,10 @@ class ProjectStore {
                 if (parsed.projects && parsed.projects.length > 0) {
                     this.state.projects = parsed.projects;
                     this.state.currentProjectId = parsed.currentProjectId || parsed.projects[0].id;
-                    return;
                 }
+                this.state.catalogs = parsed.catalogs || JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+                this.state.disciplines = parsed.disciplines || JSON.parse(JSON.stringify(DISCIPLINES));
+                return;
             }
         } catch (e) {
             console.warn('Cargando proyectos por defecto tras error en localStorage:', e);
@@ -789,6 +805,8 @@ class ProjectStore {
         // Si no hay datos guardados, cargar los mock iniciales
         this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
         this.state.currentProjectId = this.state.projects[0].id;
+        this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+        this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
     }
 
     // Sincronización con Hash de la URL para compartir enlaces y modo supervisión
@@ -866,7 +884,7 @@ class ProjectStore {
     getConflicts() {
         const project = this.getActiveProject();
         if (!project) return { conflictsByDate: {}, taskConflicts: {}, dailyLoad: {}, totalConflictsCount: 0 };
-        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated');
+        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
     }
 
     // Cálculo exhaustivo de KPIs (HH, Costo, Avance Ponderado, EVM)
@@ -875,6 +893,7 @@ class ProjectStore {
         if (!project) return null;
 
         const tasks = project.tasks || [];
+        const catalogs = this.getCatalogs();
         let totalEstimatedHH = 0;
         let totalRealHH = 0;
         let totalEstimatedCost = 0;
@@ -893,7 +912,7 @@ class ProjectStore {
                 Object.entries(t.labor).forEach(([resId, hh]) => {
                     const h = parseFloat(hh) || 0;
                     taskEstHH += h;
-                    const meta = getResourceMeta(resId);
+                    const meta = getResourceMeta(resId, catalogs);
                     totalEstimatedCost += h * (meta.hourlyRate || 30);
                 });
             }
@@ -906,7 +925,7 @@ class ProjectStore {
                 Object.entries(laborToUse).forEach(([resId, hh]) => {
                     const h = parseFloat(hh) || 0;
                     taskRealHH += h;
-                    const meta = getResourceMeta(resId);
+                    const meta = getResourceMeta(resId, catalogs);
                     totalRealCost += h * (meta.hourlyRate || 30);
                 });
             }
@@ -916,7 +935,7 @@ class ProjectStore {
             if (t.machinery) {
                 Object.entries(t.machinery).forEach(([mId, hrs]) => {
                     const h = parseFloat(hrs) || 0;
-                    const meta = getResourceMeta(mId);
+                    const meta = getResourceMeta(mId, catalogs);
                     totalEstimatedMachineryCost += h * (meta.hourlyRate || 100);
                 });
             }
@@ -924,7 +943,7 @@ class ProjectStore {
             if (machToUse) {
                 Object.entries(machToUse).forEach(([mId, hrs]) => {
                     const h = parseFloat(hrs) || 0;
-                    const meta = getResourceMeta(mId);
+                    const meta = getResourceMeta(mId, catalogs);
                     totalRealMachineryCost += h * (meta.hourlyRate || 100);
                 });
             }
@@ -1011,19 +1030,23 @@ class ProjectStore {
         const allTasks = [...(project.tasks || []), ...(project.backlog || [])];
         const resourceMap = {};
 
-        // Inicializar catálogo completo
+        const catalogs = this.getCatalogs();
+
+        // Inicializar catálogo dinámico completo
         ['labor', 'machinery', 'equipment'].forEach(category => {
-            RESOURCE_CATALOG[category].forEach(res => {
-                resourceMap[res.id] = {
-                    id: res.id,
-                    name: res.name,
-                    category,
-                    unit: res.unit,
-                    hourlyRate: res.hourlyRate || res.dailyRate || 25,
-                    estimated: 0,
-                    real: 0
-                };
-            });
+            if (catalogs[category]) {
+                catalogs[category].forEach(res => {
+                    resourceMap[res.id] = {
+                        id: res.id,
+                        name: res.name,
+                        category,
+                        unit: res.unit,
+                        hourlyRate: res.hourlyRate || res.dailyRate || 25,
+                        estimated: 0,
+                        real: 0
+                    };
+                });
+            }
         });
 
         // Acumular de las tareas
@@ -1314,11 +1337,115 @@ class ProjectStore {
         this.notify();
     }
 
+    // ======================================================================
+    // GESTIÓN DE CATÁLOGOS CRUD (EQUIPOS, MANO DE OBRA Y DISCIPLINAS)
+    // ======================================================================
+
+    getCatalogs() {
+        return this.state.catalogs || RESOURCE_CATALOG;
+    }
+
+    getDisciplines() {
+        return this.state.disciplines || DISCIPLINES;
+    }
+
+    isResourceInUse(resourceId) {
+        for (const p of this.state.projects) {
+            const allTasks = [...(p.tasks || []), ...(p.backlog || [])];
+            for (const t of allTasks) {
+                if (t.labor && t.labor[resourceId] > 0) return true;
+                if (t.realLabor && t.realLabor[resourceId] > 0) return true;
+                if (t.machinery && t.machinery[resourceId] > 0) return true;
+                if (t.realMachinery && t.realMachinery[resourceId] > 0) return true;
+                if (t.equipment && t.equipment[resourceId] > 0) return true;
+            }
+        }
+        return false;
+    }
+
+    isDisciplineInUse(discId) {
+        for (const p of this.state.projects) {
+            const allTasks = [...(p.tasks || []), ...(p.backlog || [])];
+            if (allTasks.some(t => t.discipline === discId)) return true;
+        }
+        return false;
+    }
+
+    addCatalogItem(category, item) {
+        if (this.state.isSupervisionMode) return null;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return null;
+        if (!this.state.catalogs[category]) this.state.catalogs[category] = [];
+
+        if (!item.id) {
+            item.id = (item.name || 'recurso').toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.floor(100 + Math.random() * 900);
+        }
+        this.state.catalogs[category].push(item);
+        this.notify();
+        return item;
+    }
+
+    updateCatalogItem(category, itemId, updates) {
+        if (this.state.isSupervisionMode) return null;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return null;
+        const list = this.state.catalogs[category];
+        const idx = list.findIndex(r => r.id === itemId);
+        if (idx !== -1) {
+            list[idx] = { ...list[idx], ...updates };
+            this.notify();
+            return list[idx];
+        }
+        return null;
+    }
+
+    deleteCatalogItem(category, itemId) {
+        if (this.state.isSupervisionMode) return false;
+        if (!['labor', 'machinery', 'equipment'].includes(category)) return false;
+        this.state.catalogs[category] = this.state.catalogs[category].filter(r => r.id !== itemId);
+        this.notify();
+        return true;
+    }
+
+    addDiscipline(disc) {
+        if (this.state.isSupervisionMode) return null;
+        if (!disc.id) {
+            disc.id = (disc.name || 'disc').toLowerCase().replace(/[^a-z0-9]/g, '_');
+        }
+        const color = disc.color || 'blue';
+        if (!disc.badgeClass) {
+            disc.badgeClass = `bg-${color}-500/10 text-${color}-400 border-${color}-500/30`;
+        }
+        this.state.disciplines.push(disc);
+        this.notify();
+        return disc;
+    }
+
+    updateDiscipline(discId, updates) {
+        if (this.state.isSupervisionMode) return null;
+        const idx = this.state.disciplines.findIndex(d => d.id === discId);
+        if (idx !== -1) {
+            const color = updates.color || this.state.disciplines[idx].color || 'blue';
+            updates.badgeClass = `bg-${color}-500/10 text-${color}-400 border-${color}-500/30`;
+            this.state.disciplines[idx] = { ...this.state.disciplines[idx], ...updates };
+            this.notify();
+            return this.state.disciplines[idx];
+        }
+        return null;
+    }
+
+    deleteDiscipline(discId) {
+        if (this.state.isSupervisionMode) return false;
+        this.state.disciplines = this.state.disciplines.filter(d => d.id !== discId);
+        this.notify();
+        return true;
+    }
+
     // Resetear a datos iniciales de fábrica
     resetToDefault() {
-        localStorage.removeItem(STORAGE_KEY);
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY);
         this.state.projects = JSON.parse(JSON.stringify(INITIAL_PROJECTS));
         this.state.currentProjectId = this.state.projects[0].id;
+        this.state.catalogs = JSON.parse(JSON.stringify(RESOURCE_CATALOG));
+        this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
         this.notify();
     }
 }
@@ -1330,13 +1457,15 @@ const store = new ProjectStore();
 // TIMELINE: RENDERIZADO DE CRONOGRAMA GANTT, COMPARATIVA Y DRAG & DROP
 // ==========================================================================
 class TimelineRenderer {
-    constructor(store, containerId, backlogContainerId) {
+    constructor(store, containerId, backlogContainerId, montageContainerId = 'montage-tasks-cards-container') {
         this.store = store;
         this.container = document.getElementById(containerId);
         this.backlogContainer = document.getElementById(backlogContainerId);
+        this.montageContainer = document.getElementById(montageContainerId);
         this.columnWidth = 90; // Ancho en px de cada columna diaria en desktop
         this.todayStr = '2026-09-08'; // Fecha simulada de corte de obra
         this.draggedTaskId = null;
+        this.montageSearchQuery = '';
 
         this.initEvents();
     }
@@ -1363,6 +1492,26 @@ class TimelineRenderer {
                 }
             });
         }
+
+        // Buscador interno en barra lateral de montaje
+        const searchMontageInput = document.getElementById('input-search-montage-sidebar');
+        if (searchMontageInput) {
+            searchMontageInput.addEventListener('input', (e) => {
+                this.montageSearchQuery = e.target.value.toLowerCase().trim();
+                const project = this.store.getActiveProject();
+                if (project) this.renderMontageTasksSidebar(project.tasks || []);
+            });
+        }
+    }
+
+    formatDate(dateStr) {
+        const d = new Date(dateStr + 'T00:00:00');
+        const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+        const dayName = days[d.getDay()];
+        const dayNum = String(d.getDate()).padStart(2, '0');
+        const monthName = months[d.getMonth()];
+        return { dayName, dayNum, monthName, full: `${dayName} ${dayNum} ${monthName}` };
     }
 
     /**
@@ -1380,7 +1529,7 @@ class TimelineRenderer {
     }
 
     /**
-     * Render principal del Timeline y Backlog
+     * Render principal del Timeline, Backlog y Barra de Montaje
      */
     render() {
         const project = this.store.getActiveProject();
@@ -1399,8 +1548,122 @@ class TimelineRenderer {
         // 2. Renderizar la Bandeja de Pendientes
         this.renderBacklog(project.backlog || [], conflicts);
 
-        // 3. Renderizar el Timeline Principal
+        // 3. Renderizar la Barra Lateral de Tareas de Montaje
+        this.renderMontageTasksSidebar(project.tasks || []);
+
+        // 4. Renderizar el Timeline Principal
         this.renderTimelineGrid(calendarDates, project.tasks || [], conflicts, currentTab);
+    }
+
+    /**
+     * Renderiza las tareas de montaje en la gaveta lateral derecha (Pestaña Real)
+     */
+    renderMontageTasksSidebar(tasks) {
+        if (!this.montageContainer) {
+            this.montageContainer = document.getElementById('montage-tasks-cards-container');
+        }
+        if (!this.montageContainer) return;
+
+        const disciplines = this.store.getDisciplines();
+
+        let filtered = [...tasks];
+        if (this.montageSearchQuery) {
+            filtered = filtered.filter(t => 
+                (t.name && t.name.toLowerCase().includes(this.montageSearchQuery)) ||
+                (t.tag && t.tag.toLowerCase().includes(this.montageSearchQuery)) ||
+                (t.discipline && t.discipline.toLowerCase().includes(this.montageSearchQuery))
+            );
+        }
+
+        if (filtered.length === 0) {
+            this.montageContainer.innerHTML = `
+                <div class="p-6 text-center text-slate-400 text-xs border border-dashed border-slate-700/60 rounded-xl my-2">
+                    <i data-lucide="clipboard-list" class="w-8 h-8 mx-auto mb-2 text-slate-500 opacity-60"></i>
+                    No se encontraron tareas de montaje.
+                </div>
+            `;
+            if (window.lucide) window.lucide.createIcons();
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(task => {
+            const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: task.discipline, badgeClass: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' };
+            const progress = task.progress || 0;
+            const isCompleted = task.status === 'completed' || progress >= 100;
+            const isDelayed = task.status === 'delayed';
+
+            const statusBadge = isCompleted 
+                ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Lista</span>'
+                : (isDelayed 
+                    ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">Atrasada</span>'
+                    : '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">En Obra</span>');
+
+            html += `
+                <div class="bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 hover:border-cyan-500/60 rounded-xl p-3 shadow-md transition-all">
+                    <div class="flex items-center justify-between gap-1.5 mb-1.5">
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded ${discipline.badgeClass} border font-semibold truncate max-w-[150px]">
+                            ${task.tag ? `${task.tag} • ` : ''}${discipline.name.split(' ')[0]}
+                        </span>
+                        ${statusBadge}
+                    </div>
+
+                    <h4 class="text-xs font-bold text-white mb-1.5 leading-snug line-clamp-2" title="${task.name}">
+                        ${task.name}
+                    </h4>
+
+                    <!-- Barra de avance físico -->
+                    <div class="mb-2.5">
+                        <div class="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+                            <span>Avance Físico</span>
+                            <span class="font-bold text-white">${progress}%</span>
+                        </div>
+                        <div class="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" style="width: ${progress}%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Fechas y Duración -->
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 mb-2.5 font-mono">
+                        <span class="flex items-center gap-1">
+                            <i data-lucide="calendar" class="w-3 h-3 text-slate-500"></i> ${task.realStart || task.estimatedStart || 'S/D'}
+                        </span>
+                        <span class="text-slate-300 font-bold">${task.durationDays}d</span>
+                    </div>
+
+                    <!-- Botones de Acción Rápida -->
+                    <div class="flex items-center gap-1.5 pt-1 border-t border-slate-700/60">
+                        <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
+                            <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
+                        </button>
+                        <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
+                            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        this.montageContainer.innerHTML = html;
+
+        // Listeners de los botones dentro de la barra
+        this.montageContainer.querySelectorAll('.btn-sidebar-dailylog').forEach(b => {
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = b.dataset.taskId;
+                if (window.appModals) window.appModals.openDailyLogModal(tid);
+            });
+        });
+
+        this.montageContainer.querySelectorAll('.btn-sidebar-edittask').forEach(b => {
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = b.dataset.taskId;
+                if (window.appModals) window.appModals.openTaskEditor(tid);
+            });
+        });
+
+        if (window.lucide) window.lucide.createIcons();
     }
 
     /**
@@ -1411,6 +1674,10 @@ class TimelineRenderer {
 
         const isSupervision = this.store.state.isSupervisionMode;
         const filtered = this.filterTasks(backlogTasks);
+        const disciplines = this.store.getDisciplines();
+
+        const badgeReal = document.getElementById('backlog-count-badge-real');
+        if (badgeReal) badgeReal.textContent = filtered.length;
 
         if (filtered.length === 0) {
             this.backlogContainer.innerHTML = `
@@ -1425,7 +1692,7 @@ class TimelineRenderer {
 
         let html = '';
         filtered.forEach(task => {
-            const discipline = DISCIPLINES.find(d => d.id === task.discipline) || DISCIPLINES[0];
+            const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: task.discipline, badgeClass: 'bg-amber-500/10 text-amber-400 border-amber-500/30' };
             const totalHH = task.labor ? Object.values(task.labor).reduce((a, b) => a + (parseFloat(b) || 0), 0) : 0;
             const hasHeavyMach = task.machinery && (task.machinery.grua_50t || task.machinery.hidrogrua);
 
@@ -1649,7 +1916,8 @@ class TimelineRenderer {
      * Renderiza el carril de una tarea con su barra o doble barra (en Comparativa)
      */
     renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex) {
-        const discipline = DISCIPLINES.find(d => d.id === task.discipline) || DISCIPLINES[0];
+        const disciplines = this.store.getDisciplines();
+        const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: 'General', badgeClass: 'bg-slate-700 text-slate-300' };
         const taskConflictList = conflicts.taskConflicts ? conflicts.taskConflicts[task.id] : null;
         const hasConflict = taskConflictList && taskConflictList.length > 0;
 
@@ -2028,9 +2296,16 @@ class ModalManager {
         const isSupervision = this.store.state.isSupervisionMode;
         const currentTab = this.store.state.currentTab;
 
-        const labor = task.labor || {};
-        const machinery = task.machinery || {};
-        const equipment = task.equipment || {};
+        const disciplines = this.store.getDisciplines();
+        const catalogs = this.store.getCatalogs();
+        const laborCatalog = catalogs.labor || [];
+        const machineryCatalog = [
+            ...(catalogs.machinery || []).map(m => ({ ...m, _cat: 'machinery' })),
+            ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
+        ];
+
+        const assignedLabor = Object.entries(task.labor || {}).filter(([_, h]) => h > 0);
+        const assignedMachinery = Object.entries({ ...(task.machinery || {}), ...(task.equipment || {}) }).filter(([_, h]) => h > 0);
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
@@ -2069,7 +2344,7 @@ class ModalManager {
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Disciplina</label>
                                 <select name="discipline" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
-                                    ${DISCIPLINES.map(d => `<option value="${d.id}" ${d.id === task.discipline ? 'selected' : ''}>${d.name}</option>`).join('')}
+                                    ${disciplines.map(d => `<option value="${d.id}" ${d.id === task.discipline ? 'selected' : ''}>${d.name}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
@@ -2100,33 +2375,37 @@ class ModalManager {
                             </div>
                         </div>
 
-                        <!-- Recursos: Mano de Obra (Horas-Hombre) -->
+                        <!-- Recursos: Mano de Obra (Horas-Hombre) con Menú Desplegable -->
                         <div>
-                            <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5 text-xs uppercase tracking-wider text-cyan-400">
-                                <i data-lucide="users" class="w-4 h-4"></i> Mano de Obra (Horas-Hombre totales)
-                            </h4>
-                            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                                ${RESOURCE_CATALOG.labor.map(res => `
-                                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
-                                        <label class="block text-[11px] text-slate-400 truncate" title="${res.name}">${res.name.split(' ')[0]}</label>
-                                        <input type="number" min="0" step="4" name="labor_${res.id}" value="${labor[res.id] || 0}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 mt-1 text-white font-mono text-center focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
-                                    </div>
-                                `).join('')}
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-bold text-slate-200 flex items-center gap-1.5 text-xs uppercase tracking-wider text-cyan-400">
+                                    <i data-lucide="users" class="w-4 h-4"></i> Mano de Obra (Horas-Hombre totales)
+                                </h4>
+                                ${!isSupervision ? `
+                                    <button type="button" id="btn-add-labor-row" class="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 transition-all">
+                                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> + Asignar Especialidad
+                                    </button>
+                                ` : ''}
+                            </div>
+                            <div id="task-labor-rows-container" class="space-y-2">
+                                <!-- Filas dinámicas generadas abajo -->
                             </div>
                         </div>
 
-                        <!-- Recursos: Maquinaria y Equipos Pesados -->
+                        <!-- Recursos: Maquinaria y Equipos con Menú Desplegable -->
                         <div>
-                            <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5 text-xs uppercase tracking-wider text-orange-400">
-                                <i data-lucide="truck" class="w-4 h-4"></i> Maquinaria Pesada (Horas de uso)
-                            </h4>
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                ${RESOURCE_CATALOG.machinery.map(res => `
-                                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
-                                        <label class="block text-[11px] text-slate-400 truncate" title="${res.name}">${res.name}</label>
-                                        <input type="number" min="0" step="2" name="machinery_${res.id}" value="${machinery[res.id] || 0}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 mt-1 text-white font-mono text-center focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
-                                    </div>
-                                `).join('')}
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-bold text-slate-200 flex items-center gap-1.5 text-xs uppercase tracking-wider text-orange-400">
+                                    <i data-lucide="truck" class="w-4 h-4"></i> Equipos y Maquinarias (Horas de uso)
+                                </h4>
+                                ${!isSupervision ? `
+                                    <button type="button" id="btn-add-mach-row" class="text-xs font-semibold text-orange-400 hover:text-orange-300 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 transition-all">
+                                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> + Asignar Equipo
+                                    </button>
+                                ` : ''}
+                            </div>
+                            <div id="task-mach-rows-container" class="space-y-2">
+                                <!-- Filas dinámicas generadas abajo -->
                             </div>
                         </div>
 
@@ -2166,6 +2445,86 @@ class ModalManager {
         this.modalRoot.innerHTML = html;
         document.body.classList.add('overflow-hidden');
 
+        // Renderizar filas dinámicas de Mano de Obra
+        const laborContainer = document.getElementById('task-labor-rows-container');
+        const appendLaborRow = (resId = '', hours = 8) => {
+            if (!laborContainer) return;
+            const row = document.createElement('div');
+            row.className = 'labor-row flex items-center gap-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700';
+            const selectedId = resId || (laborCatalog[0]?.id || '');
+            row.innerHTML = `
+                <div class="flex-grow">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Especialidad de Mano de Obra</label>
+                    <select class="labor-select-id w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-cyan-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                        ${laborCatalog.map(r => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name} (${r.unit || 'HH'})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="w-28 flex-shrink-0">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Horas (HH)</label>
+                    <input type="number" min="0" step="1" value="${hours}" class="labor-input-hours w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono text-center text-xs focus:border-cyan-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                </div>
+                ${!isSupervision ? `
+                    <div class="pt-3.5 flex-shrink-0">
+                        <button type="button" class="btn-remove-labor-row p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors" title="Quitar especialidad">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                ` : ''}
+            `;
+            laborContainer.appendChild(row);
+            row.querySelector('.btn-remove-labor-row')?.addEventListener('click', () => row.remove());
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        if (assignedLabor.length > 0) {
+            assignedLabor.forEach(([rId, h]) => appendLaborRow(rId, h));
+        } else if (!isSupervision && laborCatalog.length > 0) {
+            appendLaborRow(laborCatalog[0]?.id || 'supervisor', 8);
+        }
+
+        document.getElementById('btn-add-labor-row')?.addEventListener('click', () => {
+            appendLaborRow('', 8);
+        });
+
+        // Renderizar filas dinámicas de Maquinaria y Equipos
+        const machContainer = document.getElementById('task-mach-rows-container');
+        const appendMachRow = (resId = '', hours = 4) => {
+            if (!machContainer) return;
+            const row = document.createElement('div');
+            row.className = 'mach-row flex items-center gap-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700';
+            const selectedId = resId || (machineryCatalog[0]?.id || '');
+            row.innerHTML = `
+                <div class="flex-grow">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Equipo / Maquinaria</label>
+                    <select class="mach-select-id w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-orange-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                        ${machineryCatalog.map(r => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name} (${r.unit || 'hs'})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="w-28 flex-shrink-0">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Horas de Uso</label>
+                    <input type="number" min="0" step="1" value="${hours}" class="mach-input-hours w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono text-center text-xs focus:border-orange-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                </div>
+                ${!isSupervision ? `
+                    <div class="pt-3.5 flex-shrink-0">
+                        <button type="button" class="btn-remove-mach-row p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors" title="Quitar equipo">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                ` : ''}
+            `;
+            machContainer.appendChild(row);
+            row.querySelector('.btn-remove-mach-row')?.addEventListener('click', () => row.remove());
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        if (assignedMachinery.length > 0) {
+            assignedMachinery.forEach(([rId, h]) => appendMachRow(rId, h));
+        }
+
+        document.getElementById('btn-add-mach-row')?.addEventListener('click', () => {
+            appendMachRow('', 4);
+        });
+
         // Handlers
         const slider = document.getElementById('progress-slider');
         const display = document.getElementById('progress-display');
@@ -2192,13 +2551,35 @@ class ModalManager {
                 const formData = new FormData(form);
 
                 const laborUpdates = {};
-                RESOURCE_CATALOG.labor.forEach(r => {
-                    laborUpdates[r.id] = parseFloat(formData.get(`labor_${r.id}`)) || 0;
+                document.querySelectorAll('#task-labor-rows-container .labor-row').forEach(row => {
+                    const sel = row.querySelector('.labor-select-id');
+                    const inp = row.querySelector('.labor-input-hours');
+                    if (sel && inp) {
+                        const id = sel.value;
+                        const val = parseFloat(inp.value) || 0;
+                        if (id && val > 0) {
+                            laborUpdates[id] = (laborUpdates[id] || 0) + val;
+                        }
+                    }
                 });
 
                 const machUpdates = {};
-                RESOURCE_CATALOG.machinery.forEach(r => {
-                    machUpdates[r.id] = parseFloat(formData.get(`machinery_${r.id}`)) || 0;
+                const equipUpdates = {};
+                document.querySelectorAll('#task-mach-rows-container .mach-row').forEach(row => {
+                    const sel = row.querySelector('.mach-select-id');
+                    const inp = row.querySelector('.mach-input-hours');
+                    if (sel && inp) {
+                        const id = sel.value;
+                        const val = parseFloat(inp.value) || 0;
+                        if (id && val > 0) {
+                            const isEquip = (catalogs.equipment || []).some(e => e.id === id);
+                            if (isEquip) {
+                                equipUpdates[id] = (equipUpdates[id] || 0) + val;
+                            } else {
+                                machUpdates[id] = (machUpdates[id] || 0) + val;
+                            }
+                        }
+                    }
                 });
 
                 const updated = {
@@ -2210,7 +2591,8 @@ class ModalManager {
                     progress: parseInt(formData.get('progress')) || 0,
                     notes: formData.get('notes') || '',
                     labor: laborUpdates,
-                    machinery: machUpdates
+                    machinery: machUpdates,
+                    equipment: equipUpdates
                 };
 
                 this.store.updateTask(taskId, updated);
@@ -2241,16 +2623,24 @@ class ModalManager {
         if (!task) return;
 
         const currentLabor = task.realLabor || {};
-        const currentMachinery = task.realMachinery || {};
+        const currentMachinery = { ...(task.realMachinery || {}), ...(task.realEquipment || {}) };
+        const catalogs = this.store.getCatalogs();
+        const laborCatalog = catalogs.labor || [];
+        const machineryCatalog = [
+            ...(catalogs.machinery || []).map(m => ({ ...m, _cat: 'machinery' })),
+            ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
+        ];
 
         // Identificar recursos relevantes para esta tarea
-        const activeLabor = RESOURCE_CATALOG.labor.filter(res => {
+        const activeLabor = laborCatalog.filter(res => {
             return (task.labor && task.labor[res.id] > 0) || (currentLabor[res.id] > 0);
         });
-        const laborToShow = activeLabor.length > 0 ? activeLabor : RESOURCE_CATALOG.labor;
+        const laborToShow = activeLabor.length > 0 ? activeLabor : laborCatalog.slice(0, 3);
 
-        const activeMachinery = RESOURCE_CATALOG.machinery.filter(res => {
-            return (task.machinery && task.machinery[res.id] > 0) || (currentMachinery[res.id] > 0);
+        const activeMachinery = machineryCatalog.filter(res => {
+            return (task.machinery && task.machinery[res.id] > 0) || 
+                   (task.equipment && task.equipment[res.id] > 0) || 
+                   (currentMachinery[res.id] > 0);
         });
 
         const html = `
@@ -2294,42 +2684,67 @@ class ModalManager {
                                 </label>
                                 <span class="text-[10px] text-slate-400">Se suman al acumulado real</span>
                             </div>
-                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            <div id="daily-labor-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 ${laborToShow.map(res => {
                                     const accum = currentLabor[res.id] || 0;
                                     const est = (task.labor && task.labor[res.id]) || 0;
                                     return `
-                                        <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+                                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 daily-labor-item" data-res-id="${res.id}">
                                             <div class="flex items-center justify-between text-[10px] mb-1">
-                                                <span class="text-slate-300 font-semibold truncate" title="${res.name}">${res.name.split(' ')[0]}</span>
+                                                <span class="text-slate-300 font-semibold truncate" title="${res.name}">${res.name.split('(')[0]}</span>
                                                 <span class="text-slate-500 font-mono">${accum}/${est}h</span>
                                             </div>
-                                            <input type="number" min="0" step="1" id="daily-hh-${res.id}" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-emerald-500 focus:outline-none" placeholder="+0 HH">
+                                            <input type="number" min="0" step="0.5" id="daily-hh-${res.id}" class="daily-hh-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-emerald-500 focus:outline-none" placeholder="+0 HH">
                                         </div>
                                     `;
                                 }).join('')}
                             </div>
                         </div>
 
-                        <!-- Cargar Maquinaria Pesada si aplica -->
-                        ${activeMachinery.length > 0 ? `
-                            <div>
-                                <label class="block font-bold text-slate-300 mb-1.5 flex items-center gap-1 text-orange-400">
-                                    <i data-lucide="truck" class="w-3.5 h-3.5"></i> Horas de Equipos Pesados Hoy
+                        <!-- Cargar Maquinaria Pesada / Equipos de Montaje -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="block font-bold text-slate-300 mb-1 flex items-center gap-1 text-orange-400">
+                                    <i data-lucide="truck" class="w-3.5 h-3.5"></i> Horas de Equipos / Maquinarias Hoy
                                 </label>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    ${activeMachinery.map(res => {
-                                        const accum = currentMachinery[res.id] || 0;
-                                        return `
-                                            <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700 flex items-center justify-between gap-2">
-                                                <span class="text-[11px] text-slate-300 truncate" title="${res.name}">${res.name.split('(')[0]}</span>
-                                                <input type="number" min="0" step="1" id="daily-mach-${res.id}" class="w-20 bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-orange-500 focus:outline-none" placeholder="+0 hs">
-                                            </div>
-                                        `;
-                                    }).join('')}
-                                </div>
+                                <span class="text-[10px] text-slate-400">Se suman al acumulado real</span>
                             </div>
-                        ` : ''}
+                            <div id="daily-mach-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                ${activeMachinery.length > 0 ? activeMachinery.map(res => {
+                                    const accum = currentMachinery[res.id] || 0;
+                                    const est = (task.machinery && task.machinery[res.id]) || (task.equipment && task.equipment[res.id]) || 0;
+                                    return `
+                                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 daily-mach-item" data-res-id="${res.id}">
+                                            <div class="flex items-center justify-between text-[10px] mb-1">
+                                                <span class="text-slate-300 font-semibold truncate" title="${res.name}">${res.name.split('(')[0]}</span>
+                                                <span class="text-slate-500 font-mono">${accum}/${est}hs</span>
+                                            </div>
+                                            <input type="number" min="0" step="0.5" id="daily-mach-${res.id}" class="daily-mach-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-orange-500 focus:outline-none" placeholder="+0 hs">
+                                        </div>
+                                    `;
+                                }).join('') : `<p id="no-mach-notice" class="text-slate-500 text-[11px] italic py-1 sm:col-span-2">Sin equipos asignados originalmente (puedes imputar desde el selector inferior).</p>`}
+                            </div>
+                        </div>
+
+                        <!-- Selector Menú Desplegable para Imputar Recursos Adicionales en Parte Diario -->
+                        <div class="bg-slate-800/90 p-3 rounded-xl border border-slate-700/80">
+                            <label class="block text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5 text-xs">
+                                <i data-lucide="plus-circle" class="w-3.5 h-3.5 text-emerald-400"></i> Imputar Recurso / Mano de Obra a la Jornada
+                            </label>
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <select id="select-daily-extra-resource" class="flex-grow bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-white text-xs focus:border-emerald-500 focus:outline-none">
+                                    <optgroup label="👷 Especialidades de Mano de Obra">
+                                        ${laborCatalog.map(r => `<option value="labor:${r.id}">${r.name} (${r.unit || 'HH'})</option>`).join('')}
+                                    </optgroup>
+                                    <optgroup label="🚜 Equipos y Maquinarias">
+                                        ${machineryCatalog.map(r => `<option value="mach:${r.id}">${r.name} (${r.unit || 'hs'})</option>`).join('')}
+                                    </optgroup>
+                                </select>
+                                <button type="button" id="btn-add-extra-daily-resource" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition-all whitespace-nowrap">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> Agregar a Jornada
+                                </button>
+                            </div>
+                        </div>
 
                         <!-- Novedades de Campo -->
                         <div>
@@ -2369,6 +2784,65 @@ class ModalManager {
             });
         }
 
+        // Manejo del selector desplegable de recursos extra en Parte Diario
+        const btnAddExtra = document.getElementById('btn-add-extra-daily-resource');
+        if (btnAddExtra) {
+            btnAddExtra.addEventListener('click', () => {
+                const sel = document.getElementById('select-daily-extra-resource');
+                if (!sel) return;
+                const [cat, resId] = sel.value.split(':');
+                if (cat === 'labor') {
+                    const res = laborCatalog.find(r => r.id === resId);
+                    if (!res) return;
+                    const existingInp = document.getElementById(`daily-hh-${res.id}`);
+                    if (existingInp) {
+                        existingInp.focus();
+                        existingInp.classList.add('ring-2', 'ring-emerald-400');
+                        setTimeout(() => existingInp.classList.remove('ring-2', 'ring-emerald-400'), 1500);
+                        return;
+                    }
+                    const container = document.getElementById('daily-labor-container');
+                    const item = document.createElement('div');
+                    item.className = 'bg-slate-800/80 p-2.5 rounded-xl border border-emerald-500/50 daily-labor-item animate-fade-in';
+                    item.dataset.resId = res.id;
+                    item.innerHTML = `
+                        <div class="flex items-center justify-between text-[10px] mb-1">
+                            <span class="text-emerald-400 font-bold truncate" title="${res.name}">✨ ${res.name.split('(')[0]}</span>
+                            <span class="text-slate-400 font-mono">${currentLabor[res.id] || 0}/0h</span>
+                        </div>
+                        <input type="number" min="0" step="0.5" id="daily-hh-${res.id}" class="daily-hh-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-emerald-500 focus:outline-none" placeholder="+0 HH">
+                    `;
+                    container.appendChild(item);
+                    document.getElementById(`daily-hh-${res.id}`)?.focus();
+                } else if (cat === 'mach') {
+                    const res = machineryCatalog.find(r => r.id === resId);
+                    if (!res) return;
+                    const existingInp = document.getElementById(`daily-mach-${res.id}`);
+                    if (existingInp) {
+                        existingInp.focus();
+                        existingInp.classList.add('ring-2', 'ring-orange-400');
+                        setTimeout(() => existingInp.classList.remove('ring-2', 'ring-orange-400'), 1500);
+                        return;
+                    }
+                    const notice = document.getElementById('no-mach-notice');
+                    if (notice) notice.remove();
+                    const container = document.getElementById('daily-mach-container');
+                    const item = document.createElement('div');
+                    item.className = 'bg-slate-800/80 p-2.5 rounded-xl border border-orange-500/50 daily-mach-item animate-fade-in';
+                    item.dataset.resId = res.id;
+                    item.innerHTML = `
+                        <div class="flex items-center justify-between text-[10px] mb-1">
+                            <span class="text-orange-400 font-bold truncate" title="${res.name}">✨ ${res.name.split('(')[0]}</span>
+                            <span class="text-slate-400 font-mono">${currentMachinery[res.id] || 0}/0hs</span>
+                        </div>
+                        <input type="number" min="0" step="0.5" id="daily-mach-${res.id}" class="daily-mach-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-orange-500 focus:outline-none" placeholder="+0 hs">
+                    `;
+                    container.appendChild(item);
+                    document.getElementById(`daily-mach-${res.id}`)?.focus();
+                }
+            });
+        }
+
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
 
         const submitBtn = document.getElementById('btn-submit-daily');
@@ -2378,21 +2852,23 @@ class ModalManager {
                 
                 // Actualizar mano de obra acumulando únicamente lo reportado hoy
                 const updatedLabor = { ...(task.realLabor || {}) };
-                laborToShow.forEach(res => {
-                    const input = document.getElementById(`daily-hh-${res.id}`);
+                document.querySelectorAll('#daily-labor-container .daily-labor-item').forEach(item => {
+                    const rId = item.dataset.resId;
+                    const input = document.getElementById(`daily-hh-${rId}`);
                     const val = input ? parseFloat(input.value) : 0;
                     if (val > 0) {
-                        updatedLabor[res.id] = (updatedLabor[res.id] || 0) + val;
+                        updatedLabor[rId] = (updatedLabor[rId] || 0) + val;
                     }
                 });
 
                 // Actualizar maquinaria acumulando hoy
                 const updatedMach = { ...(task.realMachinery || {}) };
-                activeMachinery.forEach(res => {
-                    const input = document.getElementById(`daily-mach-${res.id}`);
+                document.querySelectorAll('#daily-mach-container .daily-mach-item').forEach(item => {
+                    const rId = item.dataset.resId;
+                    const input = document.getElementById(`daily-mach-${rId}`);
                     const val = input ? parseFloat(input.value) : 0;
                     if (val > 0) {
-                        updatedMach[res.id] = (updatedMach[res.id] || 0) + val;
+                        updatedMach[rId] = (updatedMach[rId] || 0) + val;
                     }
                 });
 
@@ -3067,10 +3543,590 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     }
 
     // ======================================================================
+    // 7.B MODAL: GESTOR DE CATÁLOGO CRUD (EQUIPOS, MANO DE OBRA Y DISCIPLINAS)
+    // ======================================================================
+    openCatalogManagerModal(initialTab = 'labor') {
+        const isSupervision = this.store.state.isSupervisionMode;
+        let activeTab = initialTab;
+        let searchTerm = '';
+        let editingItem = null; // null or { category: 'labor'|'machinery'|'equipment'|'disciplines', isNew: boolean, item: {...} }
+
+        const renderModal = () => {
+            const catalogs = this.store.getCatalogs();
+            const disciplines = this.store.getDisciplines();
+            const laborList = catalogs.labor || [];
+            const machineryList = [
+                ...(catalogs.machinery || []).map(m => ({ ...m, _cat: 'machinery' })),
+                ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
+            ];
+            const discList = disciplines || [];
+
+            const filteredLabor = laborList.filter(l => !searchTerm || l.name.toLowerCase().includes(searchTerm.toLowerCase()));
+            const filteredMach = machineryList.filter(m => !searchTerm || m.name.toLowerCase().includes(searchTerm.toLowerCase()));
+            const filteredDisc = discList.filter(d => !searchTerm || d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.id.toLowerCase().includes(searchTerm.toLowerCase()));
+
+            const html = `
+                <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-fade-in overflow-y-auto">
+                    <div class="bg-slate-900 border border-slate-700/90 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+                        
+                        <!-- Header -->
+                        <div class="p-4 sm:p-5 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
+                            <div class="flex items-center gap-2.5">
+                                <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                                    <i data-lucide="database" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                                        Catálogo de Recursos y Disciplinas
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">CRUD Industrial</span>
+                                    </h3>
+                                    <p class="text-xs text-slate-400">Administra especialidades de mano de obra, maquinarias, equipos y disciplinas de montaje</p>
+                                </div>
+                            </div>
+                            <button class="btn-close-modal text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <!-- Pestañas del Catálogo -->
+                        <div class="px-4 sm:px-6 pt-3 bg-slate-900/90 border-b border-slate-800 flex gap-2 overflow-x-auto custom-scrollbar">
+                            <button class="cat-tab-btn px-4 py-2 text-xs font-bold rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'labor' ? 'border-cyan-400 text-cyan-400 bg-slate-800/60' : 'border-transparent text-slate-400 hover:text-slate-200'}" data-tab="labor">
+                                <i data-lucide="users" class="w-4 h-4"></i>
+                                <span>Mano de Obra</span>
+                                <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800">${laborList.length}</span>
+                            </button>
+                            <button class="cat-tab-btn px-4 py-2 text-xs font-bold rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'machinery' ? 'border-orange-400 text-orange-400 bg-slate-800/60' : 'border-transparent text-slate-400 hover:text-slate-200'}" data-tab="machinery">
+                                <i data-lucide="truck" class="w-4 h-4"></i>
+                                <span>Equipos y Maquinarias</span>
+                                <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-orange-950 text-orange-300 border border-orange-800">${machineryList.length}</span>
+                            </button>
+                            <button class="cat-tab-btn px-4 py-2 text-xs font-bold rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'disciplines' ? 'border-emerald-400 text-emerald-400 bg-slate-800/60' : 'border-transparent text-slate-400 hover:text-slate-200'}" data-tab="disciplines">
+                                <i data-lucide="layers" class="w-4 h-4"></i>
+                                <span>Disciplinas de Montaje</span>
+                                <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800">${discList.length}</span>
+                            </button>
+                        </div>
+
+                        <!-- Barra de Herramientas y Búsqueda -->
+                        <div class="p-4 bg-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-slate-800">
+                            <div class="w-full sm:w-72 relative">
+                                <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-2.5"></i>
+                                <input type="text" id="cat-search-input" value="${searchTerm}" placeholder="Filtrar por nombre o código..." class="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500">
+                            </div>
+                            <div>
+                                ${!isSupervision ? `
+                                    <button type="button" id="btn-cat-add-item" class="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-md shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all">
+                                        <i data-lucide="plus" class="w-4 h-4"></i>
+                                        <span>${activeTab === 'labor' ? '+ Nueva Especialidad de Mano de Obra' : (activeTab === 'machinery' ? '+ Nuevo Equipo o Maquinaria' : '+ Nueva Disciplina de Montaje')}</span>
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+
+                        <!-- Contenedor Principal con Scroll -->
+                        <div class="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-grow space-y-3 min-h-[320px]">
+                            
+                            <!-- Sub-formulario de Edición / Creación si está activo -->
+                            ${editingItem ? renderFormHtml(editingItem) : ''}
+
+                            <!-- Tab 1: Mano de Obra -->
+                            ${activeTab === 'labor' && !editingItem ? `
+                                <div class="overflow-x-auto rounded-xl border border-slate-800">
+                                    <table class="w-full text-left text-xs text-slate-300">
+                                        <thead class="bg-slate-800/80 text-slate-400 text-[11px] uppercase tracking-wider">
+                                            <tr>
+                                                <th class="p-3">Especialidad de Mano de Obra</th>
+                                                <th class="p-3 text-center">Unidad</th>
+                                                ${!isSupervision ? '<th class="p-3 text-right">Tarifa ($/HH)</th>' : ''}
+                                                <th class="p-3 text-center">Estado de Uso</th>
+                                                ${!isSupervision ? '<th class="p-3 text-right">Acciones</th>' : ''}
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-800">
+                                            ${filteredLabor.length > 0 ? filteredLabor.map(item => {
+                                                const inUse = this.store.isResourceInUse(item.id);
+                                                return `
+                                                    <tr class="hover:bg-slate-800/40 transition-colors">
+                                                        <td class="p-3 font-semibold text-white flex items-center gap-2">
+                                                            <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                                                            <div>
+                                                                <div>${item.name}</div>
+                                                                <div class="text-[10px] text-slate-500 font-mono">ID: ${item.id}</div>
+                                                            </div>
+                                                        </td>
+                                                        <td class="p-3 text-center font-mono text-slate-400">${item.unit || 'HH'}</td>
+                                                        ${!isSupervision ? `<td class="p-3 text-right font-mono font-bold text-amber-400">$${item.costPerHour || 0}/h</td>` : ''}
+                                                        <td class="p-3 text-center">
+                                                            ${inUse ? `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">En uso en obra</span>
+                                                            ` : `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">Sin asignación</span>
+                                                            `}
+                                                        </td>
+                                                        ${!isSupervision ? `
+                                                            <td class="p-3 text-right space-x-1 whitespace-nowrap">
+                                                                <button class="btn-cat-edit px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white" data-cat="labor" data-id="${item.id}" title="Editar especialidad">
+                                                                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                                <button class="btn-cat-delete px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30" data-cat="labor" data-id="${item.id}" title="Eliminar especialidad">
+                                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                            </td>
+                                                        ` : ''}
+                                                    </tr>
+                                                `;
+                                            }).join('') : `
+                                                <tr>
+                                                    <td colspan="5" class="p-6 text-center text-slate-500 italic">No se encontraron especialidades registradas.</td>
+                                                </tr>
+                                            `}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ` : ''}
+
+                            <!-- Tab 2: Maquinarias y Equipos -->
+                            ${activeTab === 'machinery' && !editingItem ? `
+                                <div class="overflow-x-auto rounded-xl border border-slate-800">
+                                    <table class="w-full text-left text-xs text-slate-300">
+                                        <thead class="bg-slate-800/80 text-slate-400 text-[11px] uppercase tracking-wider">
+                                            <tr>
+                                                <th class="p-3">Equipo / Maquinaria</th>
+                                                <th class="p-3 text-center">Categoría</th>
+                                                <th class="p-3 text-center">Unidad</th>
+                                                ${!isSupervision ? '<th class="p-3 text-right">Costo Operativo</th>' : ''}
+                                                <th class="p-3 text-center">Estado de Uso</th>
+                                                ${!isSupervision ? '<th class="p-3 text-right">Acciones</th>' : ''}
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-800">
+                                            ${filteredMach.length > 0 ? filteredMach.map(item => {
+                                                const inUse = this.store.isResourceInUse(item.id);
+                                                const isHeavy = item._cat === 'machinery';
+                                                return `
+                                                    <tr class="hover:bg-slate-800/40 transition-colors">
+                                                        <td class="p-3 font-semibold text-white flex items-center gap-2">
+                                                            <span class="w-2 h-2 rounded-full ${isHeavy ? 'bg-orange-400' : 'bg-teal-400'}"></span>
+                                                            <div>
+                                                                <div>${item.name}</div>
+                                                                <div class="text-[10px] text-slate-500 font-mono">ID: ${item.id}</div>
+                                                            </div>
+                                                        </td>
+                                                        <td class="p-3 text-center">
+                                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${isHeavy ? 'bg-orange-500/10 text-orange-400 border border-orange-500/30' : 'bg-teal-500/10 text-teal-400 border border-teal-500/30'}">
+                                                                ${isHeavy ? 'Maquinaria Pesada' : 'Equipo de Montaje'}
+                                                            </span>
+                                                        </td>
+                                                        <td class="p-3 text-center font-mono text-slate-400">${item.unit || 'hs'}</td>
+                                                        ${!isSupervision ? `<td class="p-3 text-right font-mono font-bold text-amber-400">$${item.costPerHour || 0}/h</td>` : ''}
+                                                        <td class="p-3 text-center">
+                                                            ${inUse ? `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">En uso en obra</span>
+                                                            ` : `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">Sin asignación</span>
+                                                            `}
+                                                        </td>
+                                                        ${!isSupervision ? `
+                                                            <td class="p-3 text-right space-x-1 whitespace-nowrap">
+                                                                <button class="btn-cat-edit px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white" data-cat="${item._cat}" data-id="${item.id}" title="Editar equipo">
+                                                                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                                <button class="btn-cat-delete px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30" data-cat="${item._cat}" data-id="${item.id}" title="Eliminar equipo">
+                                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                            </td>
+                                                        ` : ''}
+                                                    </tr>
+                                                `;
+                                            }).join('') : `
+                                                <tr>
+                                                    <td colspan="6" class="p-6 text-center text-slate-500 italic">No se encontraron equipos registrados.</td>
+                                                </tr>
+                                            `}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ` : ''}
+
+                            <!-- Tab 3: Disciplinas -->
+                            ${activeTab === 'disciplines' && !editingItem ? `
+                                <div class="overflow-x-auto rounded-xl border border-slate-800">
+                                    <table class="w-full text-left text-xs text-slate-300">
+                                        <thead class="bg-slate-800/80 text-slate-400 text-[11px] uppercase tracking-wider">
+                                            <tr>
+                                                <th class="p-3">Nombre de la Disciplina</th>
+                                                <th class="p-3 text-center">Identificador (ID)</th>
+                                                <th class="p-3 text-center">Insignia / Estilo</th>
+                                                <th class="p-3 text-center">Estado de Uso</th>
+                                                ${!isSupervision ? '<th class="p-3 text-right">Acciones</th>' : ''}
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-800">
+                                            ${filteredDisc.length > 0 ? filteredDisc.map(d => {
+                                                const inUse = this.store.isDisciplineInUse(d.id);
+                                                return `
+                                                    <tr class="hover:bg-slate-800/40 transition-colors">
+                                                        <td class="p-3 font-semibold text-white flex items-center gap-2">
+                                                            <span class="w-2.5 h-2.5 rounded-full bg-${d.color || 'blue'}-400"></span>
+                                                            <span>${d.name}</span>
+                                                        </td>
+                                                        <td class="p-3 text-center font-mono text-slate-400">${d.id}</td>
+                                                        <td class="p-3 text-center">
+                                                            <span class="px-2.5 py-1 rounded-lg text-xs font-semibold ${d.badgeClass || 'bg-blue-500/10 text-blue-400 border border-blue-500/30'}">
+                                                                ${d.name}
+                                                            </span>
+                                                        </td>
+                                                        <td class="p-3 text-center">
+                                                            ${inUse ? `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">En uso en obra</span>
+                                                            ` : `
+                                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">Sin asignación</span>
+                                                            `}
+                                                        </td>
+                                                        ${!isSupervision ? `
+                                                            <td class="p-3 text-right space-x-1 whitespace-nowrap">
+                                                                <button class="btn-cat-edit px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white" data-cat="disciplines" data-id="${d.id}" title="Editar disciplina">
+                                                                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                                <button class="btn-cat-delete px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30" data-cat="disciplines" data-id="${d.id}" title="Eliminar disciplina">
+                                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                            </td>
+                                                        ` : ''}
+                                                    </tr>
+                                                `;
+                                            }).join('') : `
+                                                <tr>
+                                                    <td colspan="5" class="p-6 text-center text-slate-500 italic">No se encontraron disciplinas registradas.</td>
+                                                </tr>
+                                            `}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ` : ''}
+
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-between items-center">
+                            <span class="text-xs text-slate-400">Los cambios aplicados impactan inmediatamente en los selectores de tareas y partes diarios.</span>
+                            <button type="button" class="btn-close-modal px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cerrar</button>
+                        </div>
+
+                    </div>
+                </div>
+            `;
+
+            this.modalRoot.innerHTML = html;
+            document.body.classList.add('overflow-hidden');
+
+            // Wire tabs
+            this.modalRoot.querySelectorAll('.cat-tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    activeTab = btn.dataset.tab;
+                    editingItem = null;
+                    renderModal();
+                });
+            });
+
+            // Wire search
+            const searchInput = document.getElementById('cat-search-input');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => {
+                    searchTerm = e.target.value;
+                    renderModal();
+                });
+            }
+
+            // Wire Add button
+            const addBtn = document.getElementById('btn-cat-add-item');
+            if (addBtn) {
+                addBtn.addEventListener('click', () => {
+                    editingItem = {
+                        category: activeTab,
+                        isNew: true,
+                        item: activeTab === 'labor' 
+                            ? { name: '', unit: 'HH', costPerHour: 20 }
+                            : (activeTab === 'machinery' 
+                                ? { name: '', _cat: 'machinery', unit: 'hs', costPerHour: 100 }
+                                : { name: '', id: '', color: 'blue', icon: 'layers' })
+                    };
+                    renderModal();
+                });
+            }
+
+            // Wire Edit buttons
+            this.modalRoot.querySelectorAll('.btn-cat-edit').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const cat = btn.dataset.cat;
+                    const id = btn.dataset.id;
+                    let foundItem = null;
+                    if (cat === 'labor') {
+                        foundItem = (this.store.getCatalogs().labor || []).find(r => r.id === id);
+                    } else if (cat === 'machinery') {
+                        foundItem = (this.store.getCatalogs().machinery || []).find(r => r.id === id);
+                    } else if (cat === 'equipment') {
+                        foundItem = (this.store.getCatalogs().equipment || []).find(r => r.id === id);
+                    } else if (cat === 'disciplines') {
+                        foundItem = (this.store.getDisciplines() || []).find(d => d.id === id);
+                    }
+
+                    if (foundItem) {
+                        editingItem = {
+                            category: cat,
+                            isNew: false,
+                            item: { ...foundItem, _cat: cat }
+                        };
+                        renderModal();
+                    }
+                });
+            });
+
+            // Wire Delete buttons
+            this.modalRoot.querySelectorAll('.btn-cat-delete').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const cat = btn.dataset.cat;
+                    const id = btn.dataset.id;
+                    const inUse = cat === 'disciplines' ? this.store.isDisciplineInUse(id) : this.store.isResourceInUse(id);
+
+                    let msg = `¿Está seguro de eliminar este elemento (${id}) del catálogo?`;
+                    if (inUse) {
+                        msg = `⚠️ ATENCIÓN: Este elemento está actualmente ASIGNADO en tareas activas de la obra.\n\nSi lo elimina del catálogo, las tareas existentes conservarán sus horas cargadas, pero el recurso ya no figurará en los menús desplegables para nuevas asignaciones.\n\n¿Desea eliminarlo del catálogo de todos modos?`;
+                    }
+
+                    if (confirm(msg)) {
+                        if (cat === 'disciplines') {
+                            this.store.deleteDiscipline(id);
+                        } else {
+                            this.store.deleteCatalogItem(cat, id);
+                        }
+                        this.showToast('Elemento eliminado del catálogo', 'warning');
+                        renderModal();
+                    }
+                });
+            });
+
+            // Close buttons
+            this.modalRoot.querySelectorAll('.btn-close-modal').forEach(btn => {
+                btn.addEventListener('click', () => this.closeModal());
+            });
+
+            // Wire Form events if form is displayed
+            if (editingItem) {
+                wireFormHandlers();
+            }
+
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        const renderFormHtml = (editing) => {
+            const isLabor = editing.category === 'labor';
+            const isMach = editing.category === 'machinery' || editing.category === 'equipment';
+            const isDisc = editing.category === 'disciplines';
+            const item = editing.item;
+
+            return `
+                <div class="bg-slate-800/90 p-5 rounded-2xl border border-amber-500/40 shadow-xl mb-4 animate-fade-in">
+                    <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="${editing.isNew ? 'plus-circle' : 'edit-3'}" class="w-5 h-5 text-amber-400"></i>
+                            <h4 class="font-bold text-white text-sm">
+                                ${editing.isNew ? 'Agregar Nuevo Registro al Catálogo' : `Editar: ${item.name}`}
+                            </h4>
+                        </div>
+                        <button type="button" id="btn-cancel-cat-form" class="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded-lg hover:bg-slate-700">
+                            Volver al listado
+                        </button>
+                    </div>
+
+                    <form id="form-cat-item" class="space-y-4 text-xs">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-slate-300 font-semibold mb-1">Nombre / Denominación *</label>
+                                <input type="text" id="cat-field-name" value="${item.name || ''}" placeholder="Ej: Soldador Calificado 6G / Grúa 50T..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none" required>
+                            </div>
+
+                            ${isDisc ? `
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Identificador / Tag (Slug) *</label>
+                                    <input type="text" id="cat-field-id" value="${item.id || ''}" placeholder="ej: aislamiento" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:border-amber-500 focus:outline-none" ${!editing.isNew ? 'disabled' : ''} required>
+                                </div>
+                            ` : `
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Unidad de Medida</label>
+                                    <input type="text" id="cat-field-unit" value="${item.unit || (isLabor ? 'HH' : 'hs')}" placeholder="HH, hs, día..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:border-amber-500 focus:outline-none">
+                                </div>
+                            `}
+                        </div>
+
+                        ${isMach ? `
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Categoría del Equipo</label>
+                                    <select id="cat-field-category" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none">
+                                        <option value="machinery" ${(item._cat || editing.category) === 'machinery' ? 'selected' : ''}>Maquinaria Pesada (Grúas, Camiones, Elevadores)</option>
+                                        <option value="equipment" ${(item._cat || editing.category) === 'equipment' ? 'selected' : ''}>Equipo de Montaje (Andamios, Generadores, Compresores)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Costo Operativo Estimado ($/h o USD/h)</label>
+                                    <input type="number" id="cat-field-cost" value="${item.costPerHour || 0}" step="0.5" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:border-amber-500 focus:outline-none">
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        ${isLabor ? `
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Costo Horario Tarifa ($/HH o USD/HH)</label>
+                                    <input type="number" id="cat-field-cost" value="${item.costPerHour || 0}" step="0.5" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:border-amber-500 focus:outline-none">
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        ${isDisc ? `
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Color Temático</label>
+                                    <select id="cat-field-color" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none">
+                                        <option value="cyan" ${item.color === 'cyan' ? 'selected' : ''}>Cian / Azul Eléctrico</option>
+                                        <option value="blue" ${item.color === 'blue' ? 'selected' : ''}>Azul Clásico</option>
+                                        <option value="amber" ${item.color === 'amber' ? 'selected' : ''}>Ámbar / Naranja</option>
+                                        <option value="emerald" ${item.color === 'emerald' ? 'selected' : ''}>Esmeralda / Verde</option>
+                                        <option value="purple" ${item.color === 'purple' ? 'selected' : ''}>Púrpura / Violeta</option>
+                                        <option value="rose" ${item.color === 'rose' ? 'selected' : ''}>Rosa / Rojo Rubí</option>
+                                        <option value="teal" ${item.color === 'teal' ? 'selected' : ''}>Turquesa / Teal</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Ícono Lucide</label>
+                                    <select id="cat-field-icon" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none">
+                                        <option value="layers" ${item.icon === 'layers' ? 'selected' : ''}>layers (Capas)</option>
+                                        <option value="git-branch" ${item.icon === 'git-branch' ? 'selected' : ''}>git-branch (Piping)</option>
+                                        <option value="box" ${item.icon === 'box' ? 'selected' : ''}>box (Estructuras / Skids)</option>
+                                        <option value="cpu" ${item.icon === 'cpu' ? 'selected' : ''}>cpu (Instrumentación / Eléctrico)</option>
+                                        <option value="wrench" ${item.icon === 'wrench' ? 'selected' : ''}>wrench (Mecánico)</option>
+                                        <option value="shield" ${item.icon === 'shield' ? 'selected' : ''}>shield (Seguridad / QA)</option>
+                                        <option value="flame" ${item.icon === 'flame' ? 'selected' : ''}>flame (Soldadura / Tratamiento)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
+                            <button type="button" id="btn-cancel-cat-form-2" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold">Cancelar</button>
+                            <button type="button" id="btn-save-cat-item" class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center gap-1.5 shadow-md shadow-amber-500/20">
+                                <i data-lucide="check" class="w-4 h-4"></i> Guardar en Catálogo
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            `;
+        };
+
+        const wireFormHandlers = () => {
+            const cancelBtn = document.getElementById('btn-cancel-cat-form');
+            const cancelBtn2 = document.getElementById('btn-cancel-cat-form-2');
+            const closeForm = () => {
+                editingItem = null;
+                renderModal();
+            };
+            if (cancelBtn) cancelBtn.addEventListener('click', closeForm);
+            if (cancelBtn2) cancelBtn2.addEventListener('click', closeForm);
+
+            const saveBtn = document.getElementById('btn-save-cat-item');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', () => {
+                    const name = document.getElementById('cat-field-name')?.value.trim();
+                    if (!name) {
+                        alert('Por favor ingrese un nombre o denominación.');
+                        return;
+                    }
+
+                    if (editingItem.category === 'disciplines') {
+                        const idInput = document.getElementById('cat-field-id');
+                        const id = idInput ? idInput.value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_') : '';
+                        if (!id) {
+                            alert('Por favor especifique un identificador único.');
+                            return;
+                        }
+                        const color = document.getElementById('cat-field-color')?.value || 'blue';
+                        const icon = document.getElementById('cat-field-icon')?.value || 'layers';
+
+                        const discData = {
+                            id,
+                            name,
+                            color,
+                            icon,
+                            badgeClass: `bg-${color}-500/10 text-${color}-400 border-${color}-500/30`
+                        };
+
+                        if (editingItem.isNew) {
+                            this.store.addDiscipline(discData);
+                        } else {
+                            this.store.updateDiscipline(editingItem.item.id, discData);
+                        }
+                    } else if (editingItem.category === 'labor') {
+                        const unit = document.getElementById('cat-field-unit')?.value.trim() || 'HH';
+                        const cost = parseFloat(document.getElementById('cat-field-cost')?.value) || 0;
+                        const laborData = {
+                            name,
+                            unit,
+                            costPerHour: cost
+                        };
+                        if (editingItem.isNew) {
+                            this.store.addCatalogItem('labor', laborData);
+                        } else {
+                            this.store.updateCatalogItem('labor', editingItem.item.id, laborData);
+                        }
+                    } else {
+                        // Machinery or Equipment
+                        const targetCategory = document.getElementById('cat-field-category')?.value || 'machinery';
+                        const unit = document.getElementById('cat-field-unit')?.value.trim() || 'hs';
+                        const cost = parseFloat(document.getElementById('cat-field-cost')?.value) || 0;
+                        const machData = {
+                            name,
+                            unit,
+                            costPerHour: cost
+                        };
+
+                        if (editingItem.isNew) {
+                            this.store.addCatalogItem(targetCategory, machData);
+                        } else {
+                            const originalCat = editingItem.item._cat || editingItem.category;
+                            if (originalCat === targetCategory) {
+                                this.store.updateCatalogItem(targetCategory, editingItem.item.id, machData);
+                            } else {
+                                // Moved category from machinery to equipment or vice versa
+                                this.store.deleteCatalogItem(originalCat, editingItem.item.id);
+                                this.store.addCatalogItem(targetCategory, { id: editingItem.item.id, ...machData });
+                            }
+                        }
+                    }
+
+                    this.showToast('Catálogo actualizado exitosamente');
+                    editingItem = null;
+                    renderModal();
+                });
+            }
+        };
+
+        renderModal();
+    }
+
+    // ======================================================================
     // 8. MODAL: CREADOR LIMPIO DE TAREAS (SIN CREACIÓN PREVIA EN BACKLOG)
     // ======================================================================
     openTaskCreator() {
         const p = this.store.getActiveProject();
+        const disciplines = this.store.getDisciplines();
+        const catalogs = this.store.getCatalogs();
+        const laborCatalog = catalogs.labor || [];
+        const machineryCatalog = [
+            ...(catalogs.machinery || []).map(m => ({ ...m, _cat: 'machinery' })),
+            ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
+        ];
+
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
                 <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
@@ -3102,7 +4158,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Disciplina</label>
                                 <select name="discipline" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none">
-                                    ${DISCIPLINES.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                                    ${disciplines.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
@@ -3126,33 +4182,33 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             </div>
                         </div>
 
-                        <!-- Mano de obra -->
+                        <!-- Mano de obra con Menú Desplegable -->
                         <div>
-                            <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5 uppercase tracking-wider text-cyan-400">
-                                <i data-lucide="users" class="w-4 h-4"></i> Mano de Obra Estimada (Horas-Hombre totales)
-                            </h4>
-                            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                                ${RESOURCE_CATALOG.labor.map(res => `
-                                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
-                                        <label class="block text-[11px] text-slate-400 truncate">${res.name.split(' ')[0]}</label>
-                                        <input type="number" min="0" step="4" name="labor_${res.id}" value="${res.id === 'supervisor' ? 12 : 24}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 mt-1 text-white font-mono text-center focus:border-amber-500 focus:outline-none">
-                                    </div>
-                                `).join('')}
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider text-cyan-400">
+                                    <i data-lucide="users" class="w-4 h-4"></i> Mano de Obra Estimada (Horas-Hombre)
+                                </h4>
+                                <button type="button" id="btn-create-add-labor" class="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 transition-all">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> + Asignar Especialidad
+                                </button>
+                            </div>
+                            <div id="create-task-labor-container" class="space-y-2">
+                                <!-- Filas dinámicas -->
                             </div>
                         </div>
 
-                        <!-- Maquinaria -->
+                        <!-- Maquinaria con Menú Desplegable -->
                         <div>
-                            <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5 uppercase tracking-wider text-orange-400">
-                                <i data-lucide="truck" class="w-4 h-4"></i> Maquinaria Pesada (Horas de uso)
-                            </h4>
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                ${RESOURCE_CATALOG.machinery.map(res => `
-                                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
-                                        <label class="block text-[11px] text-slate-400 truncate">${res.name}</label>
-                                        <input type="number" min="0" step="2" name="machinery_${res.id}" value="0" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 mt-1 text-white font-mono text-center focus:border-amber-500 focus:outline-none">
-                                    </div>
-                                `).join('')}
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider text-orange-400">
+                                    <i data-lucide="truck" class="w-4 h-4"></i> Equipos y Maquinarias Estimadas
+                                </h4>
+                                <button type="button" id="btn-create-add-mach" class="text-xs font-semibold text-orange-400 hover:text-orange-300 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 transition-all">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> + Asignar Equipo
+                                </button>
+                            </div>
+                            <div id="create-task-mach-container" class="space-y-2">
+                                <!-- Filas dinámicas -->
                             </div>
                         </div>
 
@@ -3176,6 +4232,72 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
         this.modalRoot.innerHTML = html;
 
+        // Renderizadores dinámicos para el creador
+        const laborCont = document.getElementById('create-task-labor-container');
+        const appendLabor = (resId = '', hours = 16) => {
+            if (!laborCont) return;
+            const row = document.createElement('div');
+            row.className = 'create-labor-row flex items-center gap-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700';
+            const selectedId = resId || (laborCatalog[0]?.id || '');
+            row.innerHTML = `
+                <div class="flex-grow">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Especialidad</label>
+                    <select class="labor-select-id w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-cyan-500 focus:outline-none">
+                        ${laborCatalog.map(r => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name} (${r.unit || 'HH'})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="w-28 flex-shrink-0">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Horas (HH)</label>
+                    <input type="number" min="0" step="1" value="${hours}" class="labor-input-hours w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono text-center text-xs focus:border-cyan-500 focus:outline-none">
+                </div>
+                <div class="pt-3.5 flex-shrink-0">
+                    <button type="button" class="btn-remove-row p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+            laborCont.appendChild(row);
+            row.querySelector('.btn-remove-row')?.addEventListener('click', () => row.remove());
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        const machCont = document.getElementById('create-task-mach-container');
+        const appendMach = (resId = '', hours = 4) => {
+            if (!machCont) return;
+            const row = document.createElement('div');
+            row.className = 'create-mach-row flex items-center gap-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700';
+            const selectedId = resId || (machineryCatalog[0]?.id || '');
+            row.innerHTML = `
+                <div class="flex-grow">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Equipo / Maquinaria</label>
+                    <select class="mach-select-id w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-orange-500 focus:outline-none">
+                        ${machineryCatalog.map(r => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name} (${r.unit || 'hs'})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="w-28 flex-shrink-0">
+                    <label class="block text-[10px] text-slate-400 font-semibold mb-0.5">Horas</label>
+                    <input type="number" min="0" step="1" value="${hours}" class="mach-input-hours w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono text-center text-xs focus:border-orange-500 focus:outline-none">
+                </div>
+                <div class="pt-3.5 flex-shrink-0">
+                    <button type="button" class="btn-remove-row p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+            machCont.appendChild(row);
+            row.querySelector('.btn-remove-row')?.addEventListener('click', () => row.remove());
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        // Filas iniciales por defecto
+        if (laborCatalog.length > 0) {
+            appendLabor(laborCatalog[0]?.id || 'supervisor', 8);
+            if (laborCatalog.length > 1) appendLabor(laborCatalog[1]?.id || 'canista', 16);
+        }
+
+        document.getElementById('btn-create-add-labor')?.addEventListener('click', () => appendLabor('', 16));
+        document.getElementById('btn-create-add-mach')?.addEventListener('click', () => appendMach('', 4));
+
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
 
         const saveBtn = document.getElementById('btn-save-new-task');
@@ -3185,13 +4307,31 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                 const formData = new FormData(form);
 
                 const labor = {};
-                RESOURCE_CATALOG.labor.forEach(r => {
-                    labor[r.id] = parseFloat(formData.get(`labor_${r.id}`)) || 0;
+                document.querySelectorAll('#create-task-labor-container .create-labor-row').forEach(row => {
+                    const sel = row.querySelector('.labor-select-id');
+                    const inp = row.querySelector('.labor-input-hours');
+                    if (sel && inp) {
+                        const val = parseFloat(inp.value) || 0;
+                        if (val > 0) labor[sel.value] = (labor[sel.value] || 0) + val;
+                    }
                 });
 
                 const machinery = {};
-                RESOURCE_CATALOG.machinery.forEach(r => {
-                    machinery[r.id] = parseFloat(formData.get(`machinery_${r.id}`)) || 0;
+                const equipment = {};
+                document.querySelectorAll('#create-task-mach-container .create-mach-row').forEach(row => {
+                    const sel = row.querySelector('.mach-select-id');
+                    const inp = row.querySelector('.mach-input-hours');
+                    if (sel && inp) {
+                        const val = parseFloat(inp.value) || 0;
+                        if (val > 0) {
+                            const isEquip = (catalogs.equipment || []).some(e => e.id === sel.value);
+                            if (isEquip) {
+                                equipment[sel.value] = (equipment[sel.value] || 0) + val;
+                            } else {
+                                machinery[sel.value] = (machinery[sel.value] || 0) + val;
+                            }
+                        }
+                    }
                 });
 
                 const targetDest = formData.get('targetDestination');
@@ -3206,7 +4346,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     estimatedStart: startDate,
                     notes: formData.get('notes') || '',
                     labor,
-                    machinery
+                    machinery,
+                    equipment
                 };
 
                 this.store.createTask(taskData, addToBacklog);
@@ -3381,12 +4522,18 @@ class AppController {
         }
 
         // Inicializar selector de filtro de disciplinas
+        this.updateDisciplineFilter();
+    }
+
+    updateDisciplineFilter() {
         const discFilter = document.getElementById('filter-discipline');
         if (discFilter) {
+            const currentVal = discFilter.value || 'all';
             discFilter.innerHTML = `
                 <option value="all">Todas las disciplinas</option>
-                ${DISCIPLINES.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                ${this.store.getDisciplines().map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
             `;
+            discFilter.value = currentVal;
         }
     }
 
@@ -3496,13 +4643,59 @@ class AppController {
             });
         }
 
-        // Toggle Bandeja de Pendientes (Móvil / Colapsable)
-        const toggleDrawerBtn = document.getElementById('btn-toggle-backlog');
+        // Botón Gestionar Catálogo (Mano de Obra, Equipos y Disciplinas)
+        const btnCatalog = document.getElementById('btn-open-catalog');
+        if (btnCatalog) {
+            btnCatalog.addEventListener('click', () => {
+                this.modals.openCatalogManagerModal();
+            });
+        }
+
+        // Toggle Bandeja de Pendientes (Lateral Izquierdo en Tab Real)
+        const btnToggleBacklogReal = document.getElementById('btn-toggle-backlog-real');
         const backlogSidebar = document.getElementById('backlog-sidebar');
-        if (toggleDrawerBtn && backlogSidebar) {
-            toggleDrawerBtn.addEventListener('click', () => {
-                backlogSidebar.classList.toggle('hidden');
-                backlogSidebar.classList.toggle('flex');
+        if (btnToggleBacklogReal && backlogSidebar) {
+            btnToggleBacklogReal.addEventListener('click', () => {
+                const isHidden = backlogSidebar.classList.contains('hidden');
+                if (isHidden) {
+                    backlogSidebar.classList.remove('hidden');
+                    backlogSidebar.classList.add('flex');
+                } else {
+                    backlogSidebar.classList.add('hidden');
+                    backlogSidebar.classList.remove('flex');
+                }
+            });
+        }
+
+        const btnCloseBacklog = document.getElementById('btn-close-backlog-sidebar');
+        if (btnCloseBacklog && backlogSidebar) {
+            btnCloseBacklog.addEventListener('click', () => {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('flex');
+            });
+        }
+
+        // Toggle Gaveta Lateral de Tareas de Montaje (Lateral Derecho en Tab Real)
+        const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
+        const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
+        if (btnToggleTasksSidebar && montageTasksSidebar) {
+            btnToggleTasksSidebar.addEventListener('click', () => {
+                const isHidden = montageTasksSidebar.classList.contains('hidden');
+                if (isHidden) {
+                    montageTasksSidebar.classList.remove('hidden');
+                    montageTasksSidebar.classList.add('flex');
+                } else {
+                    montageTasksSidebar.classList.add('hidden');
+                    montageTasksSidebar.classList.remove('flex');
+                }
+            });
+        }
+
+        const btnCloseMontage = document.getElementById('btn-close-montage-sidebar');
+        if (btnCloseMontage && montageTasksSidebar) {
+            btnCloseMontage.addEventListener('click', () => {
+                montageTasksSidebar.classList.add('hidden');
+                montageTasksSidebar.classList.remove('flex');
             });
         }
 
@@ -3523,6 +4716,7 @@ class AppController {
      */
     render(state) {
         this.updateProjectHeader(state);
+        this.updateDisciplineFilter();
         this.updateTabsUI(state.currentTab);
         this.updateSupervisionBanner(state.isSupervisionMode);
         this.updateKPIDashboard();
@@ -3568,39 +4762,57 @@ class AppController {
             }
         });
 
-        // Control de visibilidad de la Bandeja Lateral de Pendientes según la pestaña
+        // Control de visibilidad de las Gavetas Laterales según la pestaña
         const backlogSidebar = document.getElementById('backlog-sidebar');
-        const btnToggleBacklog = document.getElementById('btn-toggle-backlog');
+        const montageSidebar = document.getElementById('montage-tasks-sidebar');
+        const btnToggleBacklog = document.getElementById('btn-toggle-backlog-real') || document.getElementById('btn-toggle-backlog');
+        const btnToggleTasks = document.getElementById('btn-toggle-tasks-sidebar');
 
         if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar totalmente la bandeja de tareas, solo mostrar el calendario limpio a pantalla completa
+            // Pestaña Estimado: Ocultar totalmente las gavetas y sus botones conmutadores
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('lg:flex', 'flex');
+            }
+            if (montageSidebar) {
+                montageSidebar.classList.add('hidden');
+                montageSidebar.classList.remove('flex');
             }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
             }
-        } else if (activeTab === 'real') {
-            // Pestaña Real: Permitir bandeja de pendientes para gestión operativa en terreno
-            if (backlogSidebar) {
-                backlogSidebar.classList.remove('hidden');
-                backlogSidebar.classList.add('lg:flex');
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.add('hidden');
+                btnToggleTasks.classList.remove('flex');
             }
+        } else if (activeTab === 'real') {
+            // Pestaña Real: Mostrar botones conmutadores de gavetas para gestión en campo
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');
             }
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.remove('hidden');
+                btnToggleTasks.classList.add('flex');
+            }
         } else if (activeTab === 'comparativa') {
-            // Pestaña Comparativa: Ocultar bandeja para maximizar la comparación visual en pantalla completa
+            // Pestaña Comparativa: Ocultar gavetas para maximizar la comparación visual en pantalla completa
             if (backlogSidebar) {
                 backlogSidebar.classList.add('hidden');
                 backlogSidebar.classList.remove('lg:flex', 'flex');
             }
+            if (montageSidebar) {
+                montageSidebar.classList.add('hidden');
+                montageSidebar.classList.remove('flex');
+            }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.add('hidden');
                 btnToggleBacklog.classList.remove('flex');
+            }
+            if (btnToggleTasks) {
+                btnToggleTasks.classList.add('hidden');
+                btnToggleTasks.classList.remove('flex');
             }
         }
 
