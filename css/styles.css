@@ -78,3 +78,60 @@
         touch-action: pan-x;
     }
 }
+
+/* ==========================================================================
+   ESTILOS DE IMPRESIÓN Y EXPORTACIÓN A PDF (A4 PORTRAIT Y A4 LANDSCAPE)
+   ========================================================================== */
+@media print {
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    header,
+    main,
+    footer,
+    #timeline-zoom-controls,
+    .btn-close-modal,
+    .no-print {
+        display: none !important;
+    }
+
+    body {
+        background: #ffffff !important;
+        color: #0f172a !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    #modal-root {
+        position: static !important;
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+    }
+
+    .printable-report-modal {
+        position: static !important;
+        max-width: 100% !important;
+        max-height: none !important;
+        width: 100% !important;
+        box-shadow: none !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+    }
+
+    .printable-content-area {
+        overflow: visible !important;
+        max-height: none !important;
+        padding: 0 !important;
+    }
+
+    .print-gantt-row {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+}

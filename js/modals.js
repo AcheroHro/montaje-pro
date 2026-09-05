@@ -4,6 +4,7 @@
 
 import { DISCIPLINES, RESOURCE_CATALOG } from './mockData.js';
 import { parseBudgetText, parseJSONBudget, getAvailablePresets } from './parser.js';
+import { getDatesRange, calculateEndDate } from './conflictEngine.js';
 
 export class ModalManager {
     constructor(store) {
@@ -27,6 +28,25 @@ export class ModalManager {
         this.modalRoot.innerHTML = '';
         this.activeModal = null;
         document.body.classList.remove('overflow-hidden');
+        if (typeof document !== 'undefined') {
+            const printStyle = document.getElementById('dynamic-print-page-style');
+            if (printStyle) printStyle.remove();
+        }
+    }
+
+    setPrintPageOrientation(orientation = 'portrait') {
+        if (typeof document === 'undefined') return;
+        let styleTag = document.getElementById('dynamic-print-page-style');
+        if (!styleTag) {
+            styleTag = document.createElement('style');
+            styleTag.id = 'dynamic-print-page-style';
+            document.head.appendChild(styleTag);
+        }
+        if (orientation === 'landscape') {
+            styleTag.textContent = `@media print { @page { size: landscape; margin: 6mm 8mm; } }`;
+        } else {
+            styleTag.textContent = `@media print { @page { size: portrait; margin: 8mm; } }`;
+        }
     }
 
     showToast(message, type = 'success') {
@@ -2585,10 +2605,189 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     }
 
     // ======================================================================
-    // 9. MODAL: INFORME EJECUTIVO DE ESTADO DE OBRA (IMPRIMIBLE / PDF)
+    // 9. MODALES: SELECTOR DE INFORMES PDF Y CRONOGRAMAS HORIZONTALES
     // ======================================================================
+    
+    /**
+     * Entrada principal al presionar el botón "Informe PDF": Despliega el selector de 4 opciones
+     */
     openPrintReportModal() {
+        this.openReportSelectorModal();
+    }
+
+    /**
+     * Modal con las 4 opciones de emisión documental solicitadas por el usuario:
+     * 1: Informe ejecutivo completo tal cual lo genera ahora (A4 Portrait)
+     * 2: Cronograma Estimado (A4 Landscape)
+     * 3: Cronograma Real o en Ejecución (A4 Landscape)
+     * 4: Cronograma Comparativa / Control (A4 Landscape)
+     */
+    openReportSelectorModal() {
         const p = this.store.getActiveProject();
+        if (!p) {
+            alert('No hay una obra activa seleccionada para generar informes.');
+            return;
+        }
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
+                <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden my-auto max-h-[94vh] flex flex-col">
+                    
+                    <!-- Header -->
+                    <div class="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
+                        <div class="flex items-center gap-2.5">
+                            <div class="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                <i data-lucide="printer" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-bold text-white">Generar Informe / Exportar a PDF</h3>
+                                <p class="text-xs text-slate-400">Selecciona el tipo de informe técnico o cronograma para la obra <strong class="text-slate-200">[${p.code}] ${p.name}</strong></p>
+                            </div>
+                        </div>
+                        <button class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- 4 Opciones de Informe -->
+                    <div class="p-5 overflow-y-auto space-y-3 custom-scrollbar">
+                        
+                        <!-- Opción 1: Informe Ejecutivo Completo -->
+                        <div class="report-option-card group bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 rounded-xl p-4 transition-all cursor-pointer flex items-start gap-3.5 shadow-sm"
+                             data-report-type="executive">
+                            <div class="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 group-hover:scale-105 transition-transform flex-shrink-0">
+                                <i data-lucide="file-text" class="w-6 h-6"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <h4 class="text-sm font-bold text-white group-hover:text-amber-400 transition-colors">
+                                        1. Informe Ejecutivo Completo
+                                    </h4>
+                                    <span class="text-[10px] font-semibold bg-slate-700 text-slate-300 px-2 py-0.5 rounded border border-slate-600">
+                                        Vertical (A4 Portrait)
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 leading-relaxed mb-2">
+                                    El informe gerencial con resumen de estado, KPIs clave (Avance ponderado, Horas-Hombre real vs plan, SPI, Presupuesto), tabla detallada de tareas programadas y firmas de conformidad comitente/inspección.
+                                </p>
+                                <span class="text-[11px] font-bold text-cyan-400 group-hover:text-amber-400 flex items-center gap-1">
+                                    Abrir Informe Ejecutivo →
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Opción 2: Cronograma Estimado -->
+                        <div class="report-option-card group bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500/60 rounded-xl p-4 transition-all cursor-pointer flex items-start gap-3.5 shadow-sm"
+                             data-report-type="estimated">
+                            <div class="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/30 group-hover:scale-105 transition-transform flex-shrink-0">
+                                <i data-lucide="calendar-days" class="w-6 h-6"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <h4 class="text-sm font-bold text-white group-hover:text-blue-400 transition-colors">
+                                        2. Cronograma Estimado
+                                    </h4>
+                                    <span class="text-[10px] font-semibold bg-blue-500/10 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded">
+                                        Horizontal (A4 Landscape)
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 leading-relaxed mb-2">
+                                    Documento en formato horizontal con título <strong>"Cronograma Estimado"</strong> y la cuadrícula completa de días con las barras de las tareas según su programación inicial planificada.
+                                </p>
+                                <span class="text-[11px] font-bold text-blue-400 group-hover:text-blue-300 flex items-center gap-1">
+                                    Generar Cronograma Estimado →
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Opción 3: Cronograma Real o en Ejecución -->
+                        <div class="report-option-card group bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/60 rounded-xl p-4 transition-all cursor-pointer flex items-start gap-3.5 shadow-sm"
+                             data-report-type="real">
+                            <div class="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 group-hover:scale-105 transition-transform flex-shrink-0">
+                                <i data-lucide="activity" class="w-6 h-6"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <h4 class="text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">
+                                        3. Cronograma Real o en Ejecución
+                                    </h4>
+                                    <span class="text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded">
+                                        Horizontal (A4 Landscape)
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 leading-relaxed mb-2">
+                                    Documento en formato horizontal con título <strong>"Cronograma Real o en Ejecución"</strong> y los días de obra con las barras en terreno, indicando el porcentaje (%) de avance físico ejecutado.
+                                </p>
+                                <span class="text-[11px] font-bold text-emerald-400 group-hover:text-emerald-300 flex items-center gap-1">
+                                    Generar Cronograma Real →
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Opción 4: Cronograma Comparativa / Control -->
+                        <div class="report-option-card group bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-purple-500/60 rounded-xl p-4 transition-all cursor-pointer flex items-start gap-3.5 shadow-sm"
+                             data-report-type="comparativa">
+                            <div class="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/30 group-hover:scale-105 transition-transform flex-shrink-0">
+                                <i data-lucide="git-compare" class="w-6 h-6"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="flex items-center justify-between gap-2 mb-1">
+                                    <h4 class="text-sm font-bold text-white group-hover:text-purple-400 transition-colors">
+                                        4. Cronograma Comparativa / Control
+                                    </h4>
+                                    <span class="text-[10px] font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded">
+                                        Horizontal (A4 Landscape)
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 leading-relaxed mb-2">
+                                    Documento en formato horizontal con título <strong>"Cronograma Comparativa / Control"</strong> y los días de obra con doble barra (Línea Base Planificada vs Avance Real) y cómputo de desvíos en días.
+                                </p>
+                                <span class="text-[11px] font-bold text-purple-400 group-hover:text-purple-300 flex items-center gap-1">
+                                    Generar Cronograma Comparativa →
+                                </span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="p-3 bg-slate-950/60 border-t border-slate-800 flex justify-end">
+                        <button class="btn-close-modal px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+                            Cerrar
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        this.modalRoot.querySelectorAll('.report-option-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const type = card.dataset.reportType;
+                if (type === 'executive') {
+                    this.openExecutiveReportModal();
+                } else {
+                    this.openGanttPrintModal(type);
+                }
+            });
+        });
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    /**
+     * Opción 1: Informe Ejecutivo Completo (Existente, en formato vertical Portrait A4)
+     */
+    openExecutiveReportModal() {
+        const p = this.store.getActiveProject();
+        if (!p) return;
+
+        this.setPrintPageOrientation('portrait');
+
         const kpis = this.store.getProjectKPIs();
         const balance = this.store.getResourceBalance();
         const allTasks = [...(p.tasks || [])];
@@ -2596,23 +2795,28 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto">
-                <div class="bg-white text-slate-900 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[95vh] flex flex-col print:m-0 print:p-0 print:max-w-none print:shadow-none">
+                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[95vh] flex flex-col print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
                     
                     <!-- Header no imprimible -->
-                    <div class="p-4 bg-slate-100 border-b border-slate-300 flex items-center justify-between print:hidden">
-                        <span class="font-bold text-slate-700 flex items-center gap-2">
-                            <i data-lucide="printer" class="w-5 h-5 text-amber-600"></i> Vista Previa de Informe Ejecutivo de Obra ${isSupervision ? '(Operativo)' : ''}
-                        </span>
+                    <div class="p-3 sm:p-4 bg-slate-100 border-b border-slate-300 flex items-center justify-between print:hidden">
                         <div class="flex items-center gap-2">
-                            <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5">
+                            <button type="button" class="btn-back-to-options px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer" title="Volver al menú de opciones">
+                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a Opciones
+                            </button>
+                            <span class="font-bold text-slate-700 flex items-center gap-2 text-xs">
+                                <i data-lucide="printer" class="w-4 h-4 text-amber-600"></i> Vista Previa de Informe Ejecutivo de Obra ${isSupervision ? '(Operativo)' : ''}
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
                                 <i data-lucide="printer" class="w-4 h-4"></i> Imprimir o Guardar PDF
                             </button>
-                            <button type="button" class="btn-close-modal px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold">Cerrar</button>
+                            <button type="button" class="btn-close-modal px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold cursor-pointer">Cerrar</button>
                         </div>
                     </div>
 
                     <!-- Cuerpo Imprimible -->
-                    <div class="p-8 space-y-6 overflow-y-auto text-xs leading-relaxed print:p-0">
+                    <div class="printable-content-area p-8 space-y-6 overflow-y-auto text-xs leading-relaxed print:p-0">
                         
                         <!-- Encabezado corporativo -->
                         <div class="flex justify-between items-start border-b-2 border-slate-900 pb-4">
@@ -2704,6 +2908,288 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         this.modalRoot.innerHTML = html;
 
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        const backBtn = this.modalRoot.querySelector('.btn-back-to-options');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => this.openReportSelectorModal());
+        }
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    /**
+     * Opciones 2, 3 y 4: Cronogramas Gantt en Formato Horizontal (A4 Landscape)
+     * Contienen el título específico requerido y en el cuerpo del documento los días con las barras de las tareas.
+     * @param {'estimated' | 'real' | 'comparativa'} reportType
+     */
+    openGanttPrintModal(reportType = 'estimated') {
+        const p = this.store.getActiveProject();
+        if (!p) return;
+
+        this.setPrintPageOrientation('landscape');
+
+        // Determinar título exacto solicitado por el usuario
+        let docTitle = 'Cronograma Estimado';
+        let docSubtitle = 'Planificación Inicial de Tareas';
+        
+        if (reportType === 'real') {
+            docTitle = 'Cronograma Real o en Ejecución';
+            docSubtitle = 'Avance Físico y Ejecución en Terreno';
+        } else if (reportType === 'comparativa') {
+            docTitle = 'Cronograma Comparativa / Control';
+            docSubtitle = 'Línea Base vs Avance Real y Desvíos';
+        }
+
+        // Obtener rango de fechas del proyecto
+        const startDateStr = p.startDate || '2026-09-01';
+        const durationDays = p.durationDays || 28;
+        const endDateStr = calculateEndDate(startDateStr, durationDays);
+        const calendarDates = getDatesRange(startDateStr, endDateStr);
+        const totalDays = calendarDates.length || 1;
+
+        const tasks = [...(p.tasks || [])];
+        const daysMap = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+        // Construir filas de tareas y sus barras de Gantt
+        const taskRowsHtml = tasks.map(task => {
+            const startDayStr = (reportType === 'real') 
+                ? (task.realStart || task.estimatedStart) 
+                : task.estimatedStart;
+            const dur = Math.max(1, task.durationDays || 1);
+            const startIndex = calendarDates.indexOf(startDayStr);
+            const isPlaced = startIndex !== -1;
+
+            let deltaDays = 0;
+            if (task.estimatedEnd && task.realEnd) {
+                const estTime = new Date(task.estimatedEnd).getTime();
+                const realTime = new Date(task.realEnd).getTime();
+                deltaDays = Math.round((realTime - estTime) / (1000 * 60 * 60 * 24));
+            }
+
+            let leftPct = 0;
+            let widthPct = 0;
+            if (isPlaced) {
+                leftPct = (startIndex / totalDays) * 100;
+                widthPct = Math.min(100 - leftPct, (dur / totalDays) * 100);
+            }
+
+            return `
+                <div class="print-gantt-row flex items-stretch border-b border-slate-200 text-xs min-h-[38px] hover:bg-slate-50">
+                    <!-- Columna Izquierda: Información de Tarea -->
+                    <div class="w-56 shrink-0 p-2 border-r-2 border-slate-300 flex flex-col justify-center bg-white">
+                        <div class="flex items-center gap-1.5 truncate">
+                            <span class="text-[9px] font-mono px-1 py-0.2 rounded font-bold bg-slate-100 text-slate-800 border border-slate-300 shrink-0">
+                                ${task.tag || 'TSK'}
+                            </span>
+                            <span class="font-bold text-slate-900 truncate" title="${task.name}">
+                                ${task.name}
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 font-mono">
+                            <span class="uppercase">${task.discipline}</span>
+                            <span>• ${task.durationDays}d</span>
+                            ${reportType !== 'estimated' ? `<span class="font-bold ${task.progress >= 100 ? 'text-blue-600' : 'text-emerald-700'}">${task.progress || 0}%</span>` : ''}
+                        </div>
+                    </div>
+
+                    <!-- Columna Derecha: Cuadrícula de Días y Barra Gantt -->
+                    <div class="flex-grow relative flex items-center bg-white">
+                        
+                        <!-- Celdas de guía de días de fondo -->
+                        <div class="absolute inset-0 flex pointer-events-none">
+                            ${calendarDates.map((dateStr) => {
+                                const dObj = new Date(dateStr + 'T12:00:00');
+                                const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                return `
+                                    <div class="h-full border-r border-slate-200/80 ${isWeekend ? 'bg-slate-50/70' : ''}" 
+                                         style="width: ${(1 / totalDays) * 100}%;"></div>
+                                `;
+                            }).join('')}
+                        </div>
+
+                        <!-- Barra de la tarea -->
+                        ${isPlaced ? `
+                            <div class="absolute inset-y-1 z-10 transition-all select-none"
+                                 style="left: ${leftPct}%; width: ${widthPct}%;">
+                                
+                                ${reportType === 'estimated' ? `
+                                    <!-- MODO ESTIMADO: BARRA PLANIFICADA -->
+                                    <div class="h-full rounded bg-blue-700 text-white border border-blue-900 shadow-sm flex items-center justify-between px-2 text-[10px] font-bold overflow-hidden">
+                                        <span class="truncate">${task.tag || ''} ${task.name}</span>
+                                        <span class="font-mono text-[9px] shrink-0 pl-1">${task.durationDays}d</span>
+                                    </div>
+                                ` : (reportType === 'real' ? `
+                                    <!-- MODO REAL O EN EJECUCIÓN: BARRA CON AVANCE REAL -->
+                                    <div class="h-full rounded bg-slate-200 border border-slate-400 overflow-hidden shadow-sm relative flex items-center">
+                                        <div class="h-full ${task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600'} transition-all"
+                                             style="width: ${task.progress || 0}%;"></div>
+                                        <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">
+                                            <span class="truncate">${task.tag || ''} ${task.name}</span>
+                                            <span class="font-mono shrink-0 pl-1 font-black">${task.progress || 0}%</span>
+                                        </div>
+                                    </div>
+                                ` : `
+                                    <!-- MODO COMPARATIVA / CONTROL: DOBLE BARRA (PLAN VS REAL) -->
+                                    <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm">
+                                        <!-- Barra Superior: Plan -->
+                                        <div class="h-[46%] rounded bg-slate-700 text-white flex items-center justify-between px-1.5 text-[8px] font-mono">
+                                            <span class="truncate">Plan: ${task.durationDays}d</span>
+                                            <span class="shrink-0 font-bold">${task.tag || ''}</span>
+                                        </div>
+                                        <!-- Barra Inferior: Real con Desvío -->
+                                        <div class="h-[48%] relative rounded bg-slate-300 overflow-hidden border border-slate-400">
+                                            <div class="h-full ${deltaDays > 0 ? 'bg-rose-600' : (task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600')}"
+                                                 style="width: ${task.progress || 0}%;"></div>
+                                            <div class="absolute inset-0 flex items-center justify-between px-1.5 text-[8px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">
+                                                <span>Real: ${task.progress || 0}%</span>
+                                                ${deltaDays !== 0 ? `
+                                                    <span class="font-mono text-[7px] px-1 rounded ${deltaDays > 0 ? 'bg-red-900 text-white' : 'bg-emerald-900 text-white'}">
+                                                        ${deltaDays > 0 ? `+${deltaDays}d` : `${deltaDays}d`}
+                                                    </span>
+                                                ` : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `)}
+
+                            </div>
+                        ` : `
+                            <span class="text-[10px] text-slate-400 italic pl-3 z-10">No asignada al calendario</span>
+                        `}
+
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto">
+                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-[98vw] shadow-2xl overflow-hidden my-auto max-h-[96vh] flex flex-col print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
+                    
+                    <!-- Header no imprimible -->
+                    <div class="p-3 bg-slate-100 border-b border-slate-300 flex items-center justify-between print:hidden">
+                        <div class="flex items-center gap-2">
+                            <button type="button" class="btn-back-to-options px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer" title="Volver al menú de opciones">
+                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a Opciones
+                            </button>
+                            <span class="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                <i data-lucide="printer" class="w-4 h-4 text-amber-600"></i> Vista Previa de Impresión Horizontal (Landscape A4)
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
+                                <i data-lucide="printer" class="w-4 h-4"></i> Imprimir o Guardar PDF
+                            </button>
+                            <button type="button" class="btn-close-modal px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold cursor-pointer">
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Cuerpo Imprimible (Orientación Horizontal A4) -->
+                    <div class="printable-content-area p-6 space-y-4 overflow-x-auto overflow-y-auto text-xs print:p-0 print:space-y-3">
+                        
+                        <!-- Encabezado con el Título del Documento -->
+                        <div class="border-b-2 border-slate-900 pb-3">
+                            <div class="flex justify-between items-center flex-wrap gap-2">
+                                <div>
+                                    <h1 class="text-2xl font-black tracking-tight text-slate-950 uppercase leading-tight">
+                                        ${docTitle.toUpperCase()}
+                                    </h1>
+                                    <p class="text-xs font-semibold text-slate-600">
+                                        ${docSubtitle} • Obra: <strong class="text-slate-900">[${p.code}] ${p.name}</strong>
+                                    </p>
+                                </div>
+                                <div class="text-right font-mono text-[11px] text-slate-600">
+                                    <p>Cliente: <strong class="text-slate-900">${p.client || 'N/A'}</strong></p>
+                                    <p>Fecha Inicio: <strong>${p.startDate}</strong> • Plazo: <strong>${p.durationDays} días</strong></p>
+                                    <p class="text-[10px] text-slate-500">Emisión: ${new Date().toLocaleDateString('es-AR')}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Cuadrícula Gantt: Días con Barras de Tareas -->
+                        <div class="border-2 border-slate-300 rounded-xl overflow-hidden bg-white shadow-sm" style="min-width: 850px;">
+                            
+                            <!-- Cabecera de Días -->
+                            <div class="flex items-stretch bg-slate-100 border-b-2 border-slate-300 font-bold text-slate-700 select-none">
+                                <div class="w-56 shrink-0 p-2.5 border-r-2 border-slate-300 text-[11px] uppercase tracking-wider flex items-center">
+                                    Actividad / Tarea de Montaje
+                                </div>
+                                <div class="flex-grow flex">
+                                    ${calendarDates.map((dateStr) => {
+                                        const dObj = new Date(dateStr + 'T12:00:00');
+                                        const dayLetter = daysMap[dObj.getDay()] || '';
+                                        const dayNum = String(dObj.getDate()).padStart(2, '0');
+                                        const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                        return `
+                                            <div class="flex flex-col items-center justify-center py-1.5 border-r border-slate-300 text-center ${isWeekend ? 'bg-slate-200/70 text-slate-500' : 'text-slate-800'}"
+                                                 style="width: ${(1 / totalDays) * 100}%;">
+                                                <span class="text-[8px] uppercase leading-none font-bold">${dayLetter}</span>
+                                                <span class="text-[10px] font-black font-mono leading-tight">${dayNum}</span>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Filas de Tareas -->
+                            <div class="divide-y divide-slate-200">
+                                ${taskRowsHtml.length > 0 ? taskRowsHtml : `
+                                    <div class="p-8 text-center text-slate-500 italic text-xs">
+                                        No hay tareas cargadas en esta obra.
+                                    </div>
+                                `}
+                            </div>
+
+                        </div>
+
+                        <!-- Leyenda Explicativa y Pie de Página -->
+                        <div class="flex justify-between items-center pt-2 text-[10px] text-slate-500 flex-wrap gap-2 border-t border-slate-200">
+                            <div class="flex items-center gap-3">
+                                <span class="font-bold text-slate-700">Referencias:</span>
+                                ${reportType === 'estimated' ? `
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-blue-700 inline-block"></span> Barra Azul: Plazo estimado planificado
+                                    </span>
+                                ` : (reportType === 'real' ? `
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-emerald-600 inline-block"></span> Relleno Verde/Azul: Avance físico real (%)
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-slate-300 border border-slate-400 inline-block"></span> Barra Gris: Duración total
+                                    </span>
+                                ` : `
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-slate-700 inline-block"></span> Barra Superior: Línea Base
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-emerald-600 inline-block"></span> Relleno Inferior: Avance Real
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-3 h-2 rounded bg-rose-600 inline-block"></span> Relleno Rojo: Atraso respecto a Línea Base
+                                    </span>
+                                `)}
+                            </div>
+                            <div class="font-mono text-slate-400 text-right">
+                                ACHERO • Avance & Control de Obras • Documento Oficial de Montaje
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+        
+        const backBtn = this.modalRoot.querySelector('.btn-back-to-options');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => this.openReportSelectorModal());
+        }
 
         if (window.lucide) window.lucide.createIcons();
     }
