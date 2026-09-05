@@ -2648,6 +2648,34 @@ class ModalManager {
         }
     }
 
+    /**
+     * Dispara la impresión nativa desactivando temporalmente el modo dark en la raíz
+     * para asegurar fondo 100% blanco y textos negros de máximo contraste en PDF y papel
+     */
+    triggerPrint() {
+        if (typeof document === 'undefined' || typeof window === 'undefined') return;
+        const htmlEl = document.documentElement;
+        const wasDark = htmlEl.classList.contains('dark');
+        if (wasDark) htmlEl.classList.remove('dark');
+
+        let restored = false;
+        const restoreTheme = () => {
+            if (restored) return;
+            restored = true;
+            if (wasDark) htmlEl.classList.add('dark');
+            window.removeEventListener('afterprint', restoreTheme);
+        };
+
+        window.addEventListener('afterprint', restoreTheme);
+
+        // Pequeño delay de 50ms para que el navegador repinte el fondo blanco antes de abrir el diálogo de impresión
+        setTimeout(() => {
+            window.print();
+            // Respaldo de seguridad por si afterprint no dispara en el navegador
+            setTimeout(restoreTheme, 1500);
+        }, 50);
+    }
+
     showToast(message, type = 'success') {
         const toast = document.createElement('div');
         const colors = type === 'error' 
@@ -5393,8 +5421,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         const isSupervision = this.store.state.isSupervisionMode;
 
         const html = `
-            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto">
-                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[95vh] flex flex-col print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
+            <div class="printable-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto print:bg-white print:p-0 print:static print:h-auto print:overflow-visible">
+                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[95vh] flex flex-col print:bg-white print:text-slate-900 print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
                     
                     <!-- Header no imprimible -->
                     <div class="p-3 sm:p-4 bg-slate-100 border-b border-slate-300 flex items-center justify-between print:hidden">
@@ -5407,7 +5435,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             </span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
+                            <button type="button" class="btn-trigger-print px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
                                 <i data-lucide="printer" class="w-4 h-4"></i> Imprimir o Guardar PDF
                             </button>
                             <button type="button" class="btn-close-modal px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold cursor-pointer">Cerrar</button>
@@ -5512,6 +5540,10 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         if (backBtn) {
             backBtn.addEventListener('click', () => this.openReportSelectorModal());
         }
+
+        this.modalRoot.querySelectorAll('.btn-trigger-print').forEach(b => {
+            b.addEventListener('click', () => this.triggerPrint());
+        });
 
         if (window.lucide) window.lucide.createIcons();
     }
@@ -5662,8 +5694,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         }).join('');
 
         const html = `
-            <div class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto">
-                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-[98vw] shadow-2xl overflow-hidden my-auto max-h-[96vh] flex flex-col print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
+            <div class="printable-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto print:bg-white print:p-0 print:static print:h-auto print:overflow-visible">
+                <div class="printable-report-modal bg-white text-slate-900 rounded-2xl w-full max-w-[98vw] shadow-2xl overflow-hidden my-auto max-h-[96vh] flex flex-col print:bg-white print:text-slate-900 print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
                     
                     <!-- Header no imprimible -->
                     <div class="p-3 bg-slate-100 border-b border-slate-300 flex items-center justify-between print:hidden">
@@ -5676,7 +5708,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             </span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
+                            <button type="button" class="btn-trigger-print px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow cursor-pointer">
                                 <i data-lucide="printer" class="w-4 h-4"></i> Imprimir o Guardar PDF
                             </button>
                             <button type="button" class="btn-close-modal px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold cursor-pointer">
@@ -5789,6 +5821,10 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
         if (backBtn) {
             backBtn.addEventListener('click', () => this.openReportSelectorModal());
         }
+
+        this.modalRoot.querySelectorAll('.btn-trigger-print').forEach(b => {
+            b.addEventListener('click', () => this.triggerPrint());
+        });
 
         if (window.lucide) window.lucide.createIcons();
     }
