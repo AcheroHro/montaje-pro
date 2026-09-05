@@ -3,7 +3,7 @@
 // ==========================================================================
 
 import { INITIAL_PROJECTS, RESOURCE_CATALOG, DISCIPLINES } from './mockData.js';
-import { analyzeResourceConflicts, calculateEndDate, getResourceMeta } from './conflictEngine.js';
+import { analyzeResourceConflicts, calculateEndDate, getResourceMeta, formatDateLocal } from './conflictEngine.js';
 
 const STORAGE_KEY = 'MONTAJE_PRO_STATE_V1';
 
@@ -304,6 +304,29 @@ class ProjectStore {
         return (p.tasks || []).find(t => t.id === taskId) || (p.backlog || []).find(t => t.id === taskId);
     }
 
+    /**
+     * Obtiene la fecha de corte de avance para el proyecto (HOY o simulación)
+     */
+    getProjectCutoffDate(project = this.getActiveProject()) {
+        if (!project) return formatDateLocal(new Date());
+        if (project.currentDate) return project.currentDate;
+        
+        const todayStr = formatDateLocal(new Date());
+        const projStart = project.startDate || '2026-09-01';
+        const projEnd = calculateEndDate(projStart, project.durationDays || 30);
+        
+        // Si la fecha actual de la máquina cae dentro del cronograma de la obra
+        if (todayStr >= projStart && todayStr <= projEnd) {
+            return todayStr;
+        }
+        
+        // Para obras demo en septiembre 2026
+        if (projStart <= '2026-09-08' && projEnd >= '2026-09-08') {
+            return '2026-09-08';
+        }
+        return projStart;
+    }
+
     getConflicts() {
         const project = this.getActiveProject();
         if (!project) return { conflictsByDate: {}, taskConflicts: {}, dailyLoad: {}, totalConflictsCount: 0 };
@@ -386,34 +409,61 @@ class ProjectStore {
         const totalEstimatedProjectCost = totalEstimatedCost + totalEstimatedMachineryCost;
         const totalRealProjectCost = totalRealCost + totalRealMachineryCost;
 
-        // Desviación en días (Comparativa)
+        // Desviación en días (Comparativa) y Planned Value riguroso (EVM)
         let totalDaysDeviation = 0;
         let delayedTasksCount = 0;
+        const cutoffDateStr = this.getProjectCutoffDate(project);
+        const [cY, cM, cD] = cutoffDateStr.split('-').map(Number);
+        const cutoffTime = new Date(cY, cM - 1, cD, 12, 0, 0).getTime();
+
+        let plannedValueHH = 0;
 
         tasks.forEach(t => {
+            const taskHH = t.labor ? Object.values(t.labor).reduce((a, b) => a + (parseFloat(b) || 0), 0) : 40;
+
+            // 1. Atraso y desvío de cronograma
             if (t.estimatedEnd && t.realEnd) {
-                const est = new Date(t.estimatedEnd).getTime();
-                const real = new Date(t.realEnd).getTime();
+                const [eY, eM, eD] = t.estimatedEnd.split('-').map(Number);
+                const [rY, rM, rD] = t.realEnd.split('-').map(Number);
+                const est = new Date(eY, eM - 1, eD, 12, 0, 0).getTime();
+                const real = new Date(rY, rM - 1, rD, 12, 0, 0).getTime();
                 const diffDays = Math.round((real - est) / (1000 * 60 * 60 * 24));
                 if (diffDays > 0) {
                     totalDaysDeviation += diffDays;
                     delayedTasksCount++;
                 }
-            } else if (t.estimatedEnd && (t.progress < 100)) {
-                // Si la fecha actual superó el estimado
-                const est = new Date(t.estimatedEnd).getTime();
-                const today = new Date('2026-09-08').getTime(); // Simulación de fecha actual de obra
-                if (today > est) {
-                    const overdue = Math.round((today - est) / (1000 * 60 * 60 * 24));
+            } else if (t.estimatedEnd && ((t.progress || 0) < 100)) {
+                const [eY, eM, eD] = t.estimatedEnd.split('-').map(Number);
+                const est = new Date(eY, eM - 1, eD, 12, 0, 0).getTime();
+                if (cutoffTime > est) {
+                    const overdue = Math.round((cutoffTime - est) / (1000 * 60 * 60 * 24));
                     totalDaysDeviation += overdue;
                     delayedTasksCount++;
+                }
+            }
+
+            // 2. Planned Value (PV) acumulado al corte de obra
+            if (t.estimatedStart && t.estimatedEnd) {
+                if (t.estimatedEnd <= cutoffDateStr) {
+                    plannedValueHH += taskHH;
+                } else if (t.estimatedStart <= cutoffDateStr) {
+                    const dur = Math.max(1, t.durationDays || 1);
+                    const [sY, sM, sD] = t.estimatedStart.split('-').map(Number);
+                    const startMs = new Date(sY, sM - 1, sD, 12, 0, 0).getTime();
+                    const elapsedDays = Math.max(1, Math.round((cutoffTime - startMs) / (1000 * 60 * 60 * 24)) + 1);
+                    const planFraction = Math.min(1, elapsedDays / dur);
+                    plannedValueHH += (taskHH * planFraction);
                 }
             }
         });
 
         // Índice SPI (Earned Value / Planned Value)
-        const plannedValueHH = totalEstimatedHH * 0.75; // 75% previsto al corte
-        const spi = plannedValueHH > 0 ? (earnedValueHH / plannedValueHH).toFixed(2) : 1.00;
+        let spi = 1.00;
+        if (plannedValueHH > 0) {
+            spi = (earnedValueHH / plannedValueHH).toFixed(2);
+        } else if (earnedValueHH > 0) {
+            spi = 1.10;
+        }
 
         // Conteo de conflictos activos
         const conflicts = this.getConflicts();
@@ -472,41 +522,62 @@ class ProjectStore {
             }
         });
 
+        const ensureResource = (resId, fallbackCategory = 'labor', fallbackUnit = 'HH') => {
+            if (!resourceMap[resId]) {
+                const meta = getResourceMeta(resId, catalogs);
+                resourceMap[resId] = {
+                    id: resId,
+                    name: meta.name || resId,
+                    category: meta.category || fallbackCategory,
+                    unit: meta.unit || fallbackUnit,
+                    hourlyRate: meta.hourlyRate || res.dailyRate || 25,
+                    estimated: 0,
+                    real: 0
+                };
+            }
+        };
+
         // Acumular de las tareas
         allTasks.forEach(task => {
             // Mano de obra
             if (task.labor) {
                 Object.entries(task.labor).forEach(([rId, qty]) => {
-                    if (resourceMap[rId]) resourceMap[rId].estimated += parseFloat(qty) || 0;
+                    ensureResource(rId, 'labor', 'HH');
+                    resourceMap[rId].estimated += parseFloat(qty) || 0;
                 });
             }
             if (task.realLabor && Object.keys(task.realLabor).length > 0) {
                 Object.entries(task.realLabor).forEach(([rId, qty]) => {
-                    if (resourceMap[rId]) resourceMap[rId].real += parseFloat(qty) || 0;
+                    ensureResource(rId, 'labor', 'HH');
+                    resourceMap[rId].real += parseFloat(qty) || 0;
                 });
             } else if (task.progress > 0 && task.labor) {
                 // Si tiene avance pero no desglose fino, computar proporcional
                 Object.entries(task.labor).forEach(([rId, qty]) => {
-                    if (resourceMap[rId]) resourceMap[rId].real += ((parseFloat(qty) || 0) * (task.progress / 100));
+                    ensureResource(rId, 'labor', 'HH');
+                    resourceMap[rId].real += ((parseFloat(qty) || 0) * (task.progress / 100));
                 });
             }
 
             // Maquinaria
             if (task.machinery) {
                 Object.entries(task.machinery).forEach(([mId, qty]) => {
-                    if (resourceMap[mId]) resourceMap[mId].estimated += parseFloat(qty) || 0;
+                    ensureResource(mId, 'machinery', 'hs');
+                    resourceMap[mId].estimated += parseFloat(qty) || 0;
                 });
             }
             if (task.realMachinery && Object.keys(task.realMachinery).length > 0) {
                 Object.entries(task.realMachinery).forEach(([mId, qty]) => {
-                    if (resourceMap[mId]) resourceMap[mId].real += parseFloat(qty) || 0;
+                    ensureResource(mId, 'machinery', 'hs');
+                    resourceMap[mId].real += parseFloat(qty) || 0;
                 });
             }
 
             // Equipamiento
             if (task.equipment) {
                 Object.entries(task.equipment).forEach(([eId, qty]) => {
-                    if (resourceMap[eId]) resourceMap[eId].estimated += parseFloat(qty) || 0;
+                    ensureResource(eId, 'equipment', 'u');
+                    resourceMap[eId].estimated += parseFloat(qty) || 0;
                 });
             }
         });
@@ -570,6 +641,27 @@ class ProjectStore {
         this.state.currentProjectId = id;
         this.notify();
         return newProject;
+    }
+
+    // Eliminar una obra del sistema (con validación de seguridad)
+    deleteProject(projectId) {
+        if (this.state.isSupervisionMode) return false;
+        if (this.state.projects.length <= 1) {
+            throw new Error('No se puede eliminar la única obra activa. Debe haber al menos una obra en la base de datos.');
+        }
+
+        const index = this.state.projects.findIndex(p => p.id === projectId);
+        if (index === -1) return false;
+
+        const deletedName = this.state.projects[index].name;
+        this.state.projects.splice(index, 1);
+
+        if (this.state.currentProjectId === projectId) {
+            this.state.currentProjectId = this.state.projects[0].id;
+        }
+
+        this.notify();
+        return { success: true, deletedName };
     }
 
     // ======================================================================
@@ -680,8 +772,8 @@ class ProjectStore {
                 task.estimatedEnd = calculateEndDate(task.estimatedStart, task.durationDays);
             }
         }
-        if (updatedFields.realStart || updatedFields.durationDays) {
-            if (task.realStart && !task.realEnd) {
+        if (updatedFields.realStart || (updatedFields.durationDays && task.realStart && !updatedFields.realEnd)) {
+            if (task.realStart && !updatedFields.realEnd) {
                 task.realEnd = calculateEndDate(task.realStart, task.durationDays);
             }
         }
@@ -694,6 +786,79 @@ class ProjectStore {
         }
 
         this.notify();
+    }
+
+    // Registrar Parte Diario estructurado con historial de auditoría
+    addDailyLog(taskId, logData) {
+        if (this.state.isSupervisionMode) return null;
+        const project = this.getActiveProject();
+        if (!project) return null;
+
+        let task = project.tasks.find(t => t.id === taskId);
+        if (!task && project.backlog) task = project.backlog.find(t => t.id === taskId);
+        if (!task) return null;
+
+        if (!task.dailyLogs) task.dailyLogs = [];
+        if (!task.realLabor) task.realLabor = {};
+        if (!task.realMachinery) task.realMachinery = {};
+
+        const logId = 'LOG-' + Date.now().toString(36) + '-' + Math.floor(10 + Math.random() * 90);
+        const date = logData.date || this.getProjectCutoffDate(project);
+        const progress = Math.min(100, Math.max(0, logData.progress !== undefined ? parseInt(logData.progress) : (task.progress || 0)));
+        const notes = (logData.notes || '').trim();
+
+        // Acumular mano de obra de la jornada
+        const laborLogged = {};
+        if (logData.labor) {
+            Object.entries(logData.labor).forEach(([rId, hrs]) => {
+                const h = parseFloat(hrs) || 0;
+                if (h > 0) {
+                    laborLogged[rId] = h;
+                    task.realLabor[rId] = (task.realLabor[rId] || 0) + h;
+                }
+            });
+        }
+
+        // Acumular maquinaria de la jornada
+        const machLogged = {};
+        if (logData.machinery) {
+            Object.entries(logData.machinery).forEach(([mId, hrs]) => {
+                const h = parseFloat(hrs) || 0;
+                if (h > 0) {
+                    machLogged[mId] = h;
+                    task.realMachinery[mId] = (task.realMachinery[mId] || 0) + h;
+                }
+            });
+        }
+
+        const newLog = {
+            id: logId,
+            date: date,
+            progress: progress,
+            labor: laborLogged,
+            machinery: machLogged,
+            notes: notes,
+            createdAt: new Date().toISOString()
+        };
+
+        task.dailyLogs.unshift(newLog); // Más reciente arriba
+        task.progress = progress;
+
+        if (progress >= 100) {
+            task.status = 'completed';
+            if (!task.realEnd) task.realEnd = date;
+        } else if (progress > 0) {
+            task.status = 'in_progress';
+            if (!task.realStart) task.realStart = task.estimatedStart || date;
+        }
+
+        if (notes) {
+            const noteHeader = `[${date} Parte Diario]: ${notes}`;
+            task.notes = task.notes ? `${task.notes}\n${noteHeader}` : noteHeader;
+        }
+
+        this.notify();
+        return newLog;
     }
 
     // Crear nueva tarea manual

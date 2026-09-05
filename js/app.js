@@ -14,6 +14,7 @@ class AppController {
         window.appModals = this.modals; // Disponible globalmente para eventos en HTML
 
         this.timeline = new TimelineRenderer(store, 'timeline-container', 'backlog-cards-container');
+        this.activeTabTracker = null;
         
         this.initDOM();
         this.initEvents();
@@ -99,6 +100,14 @@ class AppController {
         if (btnCreateProject) {
             btnCreateProject.addEventListener('click', () => {
                 this.modals.openCreateProjectModal();
+            });
+        }
+
+        // Botón Eliminar Obra Actual
+        const btnDeleteProject = document.getElementById('btn-open-delete-project');
+        if (btnDeleteProject) {
+            btnDeleteProject.addEventListener('click', () => {
+                this.modals.openDeleteProjectModal();
             });
         }
 
@@ -298,17 +307,31 @@ class AppController {
         const btnToggleBacklog = document.getElementById('btn-toggle-backlog-real') || document.getElementById('btn-toggle-backlog');
         const btnToggleTasks = document.getElementById('btn-toggle-tasks-sidebar');
 
+        const tabChanged = this.activeTabTracker !== activeTab;
+        this.activeTabTracker = activeTab;
+
         // El botón de Tareas Montaje permanece SIEMPRE disponible en las 3 pestañas
         if (btnToggleTasks) {
             btnToggleTasks.classList.remove('hidden');
             btnToggleTasks.classList.add('flex');
-            btnToggleTasks.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+            if (tabChanged) {
+                btnToggleTasks.classList.remove('bg-cyan-600/30', 'text-cyan-300', 'border-cyan-500/60', 'ring-1', 'ring-cyan-500/50');
+            }
         }
 
-        // Por defecto, las gavetas inician ocultas para mostrar únicamente el calendario completo
-        if (montageSidebar) {
-            montageSidebar.classList.add('hidden');
-            montageSidebar.classList.remove('flex');
+        // Al cambiar de pestaña, ocultar gavetas para iniciar mostrando el calendario limpio
+        if (tabChanged) {
+            if (montageSidebar) {
+                montageSidebar.classList.add('hidden');
+                montageSidebar.classList.remove('flex');
+            }
+            if (backlogSidebar) {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('flex');
+            }
+            if (btnToggleBacklog) {
+                btnToggleBacklog.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
+            }
         }
 
         if (activeTab === 'estimated') {
@@ -323,14 +346,9 @@ class AppController {
             }
         } else if (activeTab === 'real') {
             // Pestaña Real: Permitir abrir bandeja de pendientes
-            if (backlogSidebar) {
-                backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('flex');
-            }
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');
-                btnToggleBacklog.classList.remove('bg-amber-600/30', 'text-amber-300', 'border-amber-500/60', 'ring-1', 'ring-amber-500/50');
             }
         } else if (activeTab === 'comparativa') {
             // Pestaña Comparativa: Ocultar bandeja de pendientes
@@ -417,6 +435,7 @@ class AppController {
         // Ocultar botones de modificación en modo supervisión
         const editOnlyButtons = [
             'btn-open-create-project',
+            'btn-open-delete-project',
             'btn-open-import',
             'btn-new-task',
             'btn-reset-data'
@@ -506,6 +525,12 @@ class AppController {
                 conflictsBadge.classList.remove('hidden');
                 conflictsBadge.classList.add('flex', 'animate-pulse');
                 conflictsText.textContent = `${kpis.activeConflicts} sobreasignaciones detectadas`;
+                conflictsBadge.onclick = () => {
+                    const conflicts = this.store.getConflicts();
+                    const dates = Object.keys(conflicts.conflictsByDate || {});
+                    const targetDate = dates.length > 0 ? dates[0] : this.store.getProjectCutoffDate();
+                    this.modals.openConflictInspector(targetDate);
+                };
             } else {
                 conflictsBadge.classList.add('hidden');
                 conflictsBadge.classList.remove('flex', 'animate-pulse');

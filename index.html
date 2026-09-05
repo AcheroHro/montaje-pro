@@ -67,6 +67,11 @@
                         <i data-lucide="folder-plus" class="w-4 h-4"></i>
                         <span class="hidden xl:inline text-[11px]">Nueva Obra</span>
                     </button>
+                    <!-- Botón Eliminar Obra Actual -->
+                    <button id="btn-open-delete-project" class="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 text-xs font-bold flex items-center gap-1" title="Eliminar la obra seleccionada">
+                        <i data-lucide="folder-minus" class="w-4 h-4"></i>
+                        <span class="hidden xl:inline text-[11px]">Borrar Obra</span>
+                    </button>
                 </div>
             </div>
 
@@ -151,7 +156,7 @@
                     <p id="project-client-loc" class="text-xs text-slate-400">Comodoro Rivadavia, Chubut</p>
                 </div>
                 <!-- Alerta de Sobreasignación Activa -->
-                <div id="kpi-conflicts-badge" class="hidden items-center gap-1.5 px-3 py-1 rounded-xl bg-red-500/20 text-red-300 border border-red-500/40 text-xs font-semibold cursor-pointer hover:bg-red-500/30 transition-colors" onclick="window.appModals.openConflictInspector('2026-09-07')">
+                <div id="kpi-conflicts-badge" class="hidden items-center gap-1.5 px-3 py-1 rounded-xl bg-red-500/20 text-red-300 border border-red-500/40 text-xs font-semibold cursor-pointer hover:bg-red-500/30 transition-colors" onclick="window.appModals.openConflictInspector()">
                     <i data-lucide="alert-triangle" class="w-4 h-4 text-red-400"></i>
                     <span id="kpi-conflicts-text">Conflictos de recursos detectados</span>
                 </div>

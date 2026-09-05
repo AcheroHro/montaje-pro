@@ -54,12 +54,14 @@ export class TimelineRenderer {
     }
 
     formatDate(dateStr) {
-        const d = new Date(dateStr + 'T00:00:00');
+        if (!dateStr) return { dayName: '', dayNum: '', monthName: '', full: '' };
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dateObj = new Date(y, m - 1, d, 12, 0, 0);
         const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
         const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        const dayName = days[d.getDay()];
-        const dayNum = String(d.getDate()).padStart(2, '0');
-        const monthName = months[d.getMonth()];
+        const dayName = days[dateObj.getDay()];
+        const dayNum = String(d).padStart(2, '0');
+        const monthName = months[m - 1];
         return { dayName, dayNum, monthName, full: `${dayName} ${dayNum} ${monthName}` };
     }
 
@@ -67,14 +69,7 @@ export class TimelineRenderer {
      * Formatea fecha YYYY-MM-DD a formato amigable: "Lun 01 Sep"
      */
     formatDateLabel(dateStr) {
-        if (!dateStr) return '';
-        const d = new Date(dateStr + 'T00:00:00');
-        const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-        const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        const dayName = days[d.getDay()];
-        const dayNum = String(d.getDate()).padStart(2, '0');
-        const monthName = months[d.getMonth()];
-        return { dayName, dayNum, monthName, full: `${dayName} ${dayNum} ${monthName}` };
+        return this.formatDate(dateStr);
     }
 
     /**
@@ -87,6 +82,9 @@ export class TimelineRenderer {
         const state = this.store.state;
         const conflicts = this.store.getConflicts();
         const currentTab = state.currentTab;
+
+        // Fecha dinámica de corte de obra ("HOY")
+        this.todayStr = this.store.getProjectCutoffDate(project);
 
         // 1. Determinar rango de fechas del timeline (21 a 28 días desde project.startDate)
         const startDateStr = project.startDate || '2026-09-01';

@@ -5,17 +5,32 @@
 import { RESOURCE_CATALOG } from './mockData.js';
 
 /**
+ * Formatea un objeto Date a string YYYY-MM-DD usando fecha local, sin desfase UTC
+ */
+export function formatDateLocal(d) {
+    if (!d || isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+/**
  * Genera un array de fechas (YYYY-MM-DD) entre startDate y endDate inclusive
  */
 export function getDatesRange(startDateStr, endDateStr) {
     const dates = [];
     if (!startDateStr || !endDateStr) return dates;
     
-    let curr = new Date(startDateStr + 'T00:00:00');
-    const end = new Date(endDateStr + 'T00:00:00');
+    const [sYear, sMonth, sDay] = startDateStr.split('-').map(Number);
+    const [eYear, eMonth, eDay] = endDateStr.split('-').map(Number);
+    
+    // Mediodía para evitar cualquier salto DST
+    let curr = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
+    const end = new Date(eYear, eMonth - 1, eDay, 12, 0, 0);
     
     while (curr <= end) {
-        dates.push(curr.toISOString().split('T')[0]);
+        dates.push(formatDateLocal(curr));
         curr.setDate(curr.getDate() + 1);
     }
     return dates;
@@ -27,9 +42,10 @@ export function getDatesRange(startDateStr, endDateStr) {
 export function calculateEndDate(startDateStr, durationDays) {
     if (!startDateStr) return null;
     const dur = Math.max(1, parseInt(durationDays) || 1);
-    const start = new Date(startDateStr + 'T00:00:00');
+    const [sYear, sMonth, sDay] = startDateStr.split('-').map(Number);
+    const start = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
     start.setDate(start.getDate() + (dur - 1));
-    return start.toISOString().split('T')[0];
+    return formatDateLocal(start);
 }
 
 /**
@@ -139,8 +155,8 @@ export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'est
                 ? resourceLimits[resId] 
                 : (meta.defaultLimit || 5);
 
-            if (data.total > limit && data.taskIds.length > 1) {
-                // Hay sobreasignación
+            if (data.total > limit) {
+                // Hay sobreasignación (monotarea o multitarea)
                 if (!conflictsByDate[date]) conflictsByDate[date] = [];
 
                 const conflictItem = {

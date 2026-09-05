@@ -70,6 +70,22 @@ export class ModalManager {
         const assignedLabor = Object.entries(task.labor || {}).filter(([_, h]) => h > 0);
         const assignedMachinery = Object.entries({ ...(task.machinery || {}), ...(task.equipment || {}) }).filter(([_, h]) => h > 0);
 
+        let deviationBadgeHtml = '';
+        const estStart = task.estimatedStart;
+        const realStart = task.realStart;
+        if (estStart && realStart) {
+            const [ey, em, ed] = estStart.split('-').map(Number);
+            const [ry, rm, rd] = realStart.split('-').map(Number);
+            const diffDays = Math.round((new Date(ry, rm - 1, rd, 12) - new Date(ey, em - 1, ed, 12)) / (1000 * 60 * 60 * 24));
+            if (diffDays > 0) {
+                deviationBadgeHtml = `<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">+${diffDays}d atraso inicio</span>`;
+            } else if (diffDays < 0) {
+                deviationBadgeHtml = `<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">${Math.abs(diffDays)}d adelanto inicio</span>`;
+            } else {
+                deviationBadgeHtml = `<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">Inicio según plan</span>`;
+            }
+        }
+
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
                 <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
@@ -102,7 +118,7 @@ export class ModalManager {
                             </div>
                         </div>
 
-                        <!-- Disciplina y Fechas -->
+                        <!-- Disciplina y Fechas Estimadas (Línea Base) -->
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Disciplina</label>
@@ -111,12 +127,32 @@ export class ModalManager {
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-slate-300 font-semibold mb-1">Duración (Días)</label>
-                                <input type="number" name="durationDays" min="1" max="60" value="${task.durationDays || 3}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none" required ${isSupervision ? 'disabled' : ''}>
+                                <label class="block text-slate-300 font-semibold mb-1">Duración Prevista (Días)</label>
+                                <input type="number" name="durationDays" min="1" max="60" value="${task.durationDays || 3}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono" required ${isSupervision ? 'disabled' : ''}>
                             </div>
                             <div>
-                                <label class="block text-slate-300 font-semibold mb-1">Fecha Inicio (Estimada)</label>
-                                <input type="date" name="estimatedStart" value="${task.estimatedStart || ''}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                                <label class="block text-slate-300 font-semibold mb-1 text-cyan-400">📅 Inicio Estimado (Línea Base)</label>
+                                <input type="date" name="estimatedStart" value="${task.estimatedStart || ''}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-cyan-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                            </div>
+                        </div>
+
+                        <!-- Ejecución en Terreno (Fechas Reales vs Plan) -->
+                        <div class="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700/80">
+                            <div class="flex items-center justify-between mb-2">
+                                <h5 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                                    <i data-lucide="calendar-clock" class="w-4 h-4"></i> Ejecución en Terreno (Fechas Reales)
+                                </h5>
+                                ${deviationBadgeHtml}
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] text-slate-300 font-semibold mb-1">Fecha Inicio Real</label>
+                                    <input type="date" name="realStart" value="${task.realStart || ''}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] text-slate-300 font-semibold mb-1">Fecha Fin Real (o Cierre Estimado)</label>
+                                    <input type="date" name="realEnd" value="${task.realEnd || ''}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:border-amber-500 focus:outline-none" ${isSupervision ? 'disabled' : ''}>
+                                </div>
                             </div>
                         </div>
 
@@ -351,6 +387,8 @@ export class ModalManager {
                     discipline: formData.get('discipline'),
                     durationDays: parseInt(formData.get('durationDays')) || 3,
                     estimatedStart: formData.get('estimatedStart') || null,
+                    realStart: formData.get('realStart') || null,
+                    realEnd: formData.get('realEnd') || null,
                     progress: parseInt(formData.get('progress')) || 0,
                     notes: formData.get('notes') || '',
                     labor: laborUpdates,
@@ -406,6 +444,8 @@ export class ModalManager {
                    (currentMachinery[res.id] > 0);
         });
 
+        const defaultDate = this.store.getProjectCutoffDate();
+
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in overflow-y-auto">
                 <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
@@ -425,6 +465,15 @@ export class ModalManager {
 
                     <div class="p-4 space-y-4 text-xs overflow-y-auto custom-scrollbar flex-grow">
                         
+                        <!-- Fecha de Jornada Reportada -->
+                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 flex items-center justify-between gap-2">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-200">Fecha del Parte Diario</label>
+                                <span class="text-[10px] text-slate-400">Jornada laboral imputada</span>
+                            </div>
+                            <input type="date" id="daily-log-date" value="${defaultDate}" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none">
+                        </div>
+
                         <!-- Avance Rápido -->
                         <div class="bg-slate-800 p-3 rounded-xl border border-slate-700">
                             <div class="flex justify-between items-center mb-2">
@@ -514,6 +563,30 @@ export class ModalManager {
                             <label class="block font-semibold text-slate-300 mb-1">Novedad / Observaciones de Jornada</label>
                             <input type="text" id="daily-note" placeholder="Ej: Soldadura de 4 juntas completadas con éxito; viento normal" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white focus:outline-none focus:border-emerald-500 text-xs">
                         </div>
+
+                        <!-- Historial de Partes Anteriores -->
+                        ${(task.dailyLogs && task.dailyLogs.length > 0) ? `
+                            <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80">
+                                <h5 class="font-bold text-slate-300 mb-2 flex items-center gap-1.5 text-xs text-emerald-400">
+                                    <i data-lucide="history" class="w-3.5 h-3.5"></i> Historial de Partes Asentados (${task.dailyLogs.length})
+                                </h5>
+                                <div class="space-y-1.5 max-h-32 overflow-y-auto custom-scrollbar pr-1">
+                                    ${task.dailyLogs.map(l => `
+                                        <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px]">
+                                            <div class="flex items-center justify-between font-mono text-[10px] text-slate-400 mb-0.5">
+                                                <span class="text-emerald-300 font-bold">${l.date}</span>
+                                                <span>Avance: <strong class="text-white">${l.progress}%</strong></span>
+                                            </div>
+                                            ${l.notes ? `<p class="text-slate-300 text-[11px] italic mb-1">"${l.notes}"</p>` : ''}
+                                            <div class="flex flex-wrap gap-1 text-[9px] font-mono">
+                                                ${Object.entries(l.labor || {}).map(([rId, h]) => `<span class="bg-cyan-950/90 px-1.5 py-0.5 rounded border border-cyan-800 text-cyan-300">${rId}: +${h}h</span>`).join(' ')}
+                                                ${Object.entries(l.machinery || {}).map(([mId, h]) => `<span class="bg-orange-950/90 px-1.5 py-0.5 rounded border border-orange-800 text-orange-300">${mId}: +${h}hs</span>`).join(' ')}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
 
                     </div>
 
@@ -611,52 +684,40 @@ export class ModalManager {
         const submitBtn = document.getElementById('btn-submit-daily');
         if (submitBtn) {
             submitBtn.addEventListener('click', () => {
+                const logDate = document.getElementById('daily-log-date')?.value || defaultDate;
                 const note = document.getElementById('daily-note').value;
                 
-                // Actualizar mano de obra acumulando únicamente lo reportado hoy
-                const updatedLabor = { ...(task.realLabor || {}) };
+                // Mano de obra acumulando únicamente lo reportado hoy
+                const laborLogged = {};
                 document.querySelectorAll('#daily-labor-container .daily-labor-item').forEach(item => {
                     const rId = item.dataset.resId;
                     const input = document.getElementById(`daily-hh-${rId}`);
                     const val = input ? parseFloat(input.value) : 0;
                     if (val > 0) {
-                        updatedLabor[rId] = (updatedLabor[rId] || 0) + val;
+                        laborLogged[rId] = val;
                     }
                 });
 
-                // Actualizar maquinaria acumulando hoy
-                const updatedMach = { ...(task.realMachinery || {}) };
+                // Maquinaria acumulando hoy
+                const machLogged = {};
                 document.querySelectorAll('#daily-mach-container .daily-mach-item').forEach(item => {
                     const rId = item.dataset.resId;
                     const input = document.getElementById(`daily-mach-${rId}`);
                     const val = input ? parseFloat(input.value) : 0;
                     if (val > 0) {
-                        updatedMach[rId] = (updatedMach[rId] || 0) + val;
+                        machLogged[rId] = val;
                     }
                 });
 
-                const todayStr = '2026-09-08';
-                const fullNotes = task.notes 
-                    ? `${task.notes}\n[${todayStr} Parte Diario]: ${note || 'Avance reportado'}` 
-                    : `[${todayStr} Parte Diario]: ${note || 'Avance reportado'}`;
-
-                const updates = {
+                this.store.addDailyLog(taskId, {
+                    date: logDate,
                     progress: currentProgress,
-                    realLabor: updatedLabor,
-                    realMachinery: updatedMach,
-                    notes: fullNotes,
-                    status: currentProgress >= 100 ? 'completed' : 'in_progress'
-                };
+                    labor: laborLogged,
+                    machinery: machLogged,
+                    notes: note
+                });
 
-                if (!task.realStart) {
-                    updates.realStart = task.estimatedStart || todayStr;
-                }
-                if (currentProgress >= 100 && !task.realEnd) {
-                    updates.realEnd = todayStr;
-                }
-
-                this.store.updateTask(taskId, updates);
-                this.showToast(`Parte diario asentado: Avance al ${currentProgress}%`);
+                this.showToast(`Parte diario asentado para el ${logDate}: Avance al ${currentProgress}%`);
                 this.closeModal();
             });
         }
@@ -669,7 +730,12 @@ export class ModalManager {
     // ======================================================================
     openConflictInspector(dateStr) {
         const conflicts = this.store.getConflicts();
-        const dateConflicts = (conflicts.conflictsByDate && conflicts.conflictsByDate[dateStr]) || [];
+        let activeDate = dateStr;
+        if (!activeDate || !conflicts.conflictsByDate || !conflicts.conflictsByDate[activeDate]) {
+            const availableDates = Object.keys(conflicts.conflictsByDate || {});
+            activeDate = availableDates.length > 0 ? availableDates[0] : (dateStr || this.store.getProjectCutoffDate());
+        }
+        const dateConflicts = (conflicts.conflictsByDate && conflicts.conflictsByDate[activeDate]) || [];
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
@@ -680,7 +746,7 @@ export class ModalManager {
                             <i data-lucide="alert-triangle" class="w-5 h-5 text-red-400"></i>
                             <div>
                                 <h3 class="text-sm font-bold text-white">Alerta de Sobreasignación de Recursos</h3>
-                                <p class="text-[11px] text-red-300 font-mono">Fecha: ${dateStr}</p>
+                                <p class="text-[11px] text-red-300 font-mono">Fecha: ${activeDate}</p>
                             </div>
                         </div>
                         <button class="btn-close-modal text-slate-400 hover:text-white p-1">
@@ -694,7 +760,7 @@ export class ModalManager {
                                 const t = this.store.getTaskById(id);
                                 return t ? `<li class="text-slate-300 font-medium py-1 flex items-center justify-between">
                                     <span>• ${t.name}</span>
-                                    <button class="btn-shift-task px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 text-[10px]" data-task-id="${t.id}" data-current-date="${dateStr}">
+                                    <button class="btn-shift-task px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 text-[10px]" data-task-id="${t.id}" data-current-date="${activeDate}">
                                         Desplazar +1 día
                                     </button>
                                 </li>` : '';
@@ -1132,6 +1198,85 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name}</option>
                     `).join('');
                     selector.value = created.id;
+                }
+            });
+        }
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ======================================================================
+    // 6B. MODAL: ELIMINAR OBRA / PROYECTO (VALIDACIÓN DE SEGURIDAD)
+    // ======================================================================
+    openDeleteProjectModal(projectId = this.store.state.currentProjectId) {
+        if (this.store.state.isSupervisionMode) return;
+        const project = this.store.state.projects.find(p => p.id === projectId);
+        if (!project) return;
+
+        if (this.store.state.projects.length <= 1) {
+            this.showToast('No puedes eliminar la única obra disponible en la base de datos', 'warning');
+            return;
+        }
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
+                <div class="bg-slate-900 border border-rose-500/60 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+                    <div class="p-4 bg-rose-950/40 border-b border-rose-500/30 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="trash-2" class="w-5 h-5 text-rose-400"></i>
+                            <div>
+                                <h3 class="text-sm font-bold text-white">Eliminar Obra / Proyecto</h3>
+                                <p class="text-[11px] text-rose-300 font-mono truncate max-w-[280px]">${project.name}</p>
+                            </div>
+                        </div>
+                        <button class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="p-5 text-xs text-slate-300 space-y-3">
+                        <p>¿Estás seguro de que deseas eliminar permanentemente la obra <strong>"${project.name}"</strong> [${project.code || project.id}]?</p>
+                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 text-[11px] space-y-1 text-slate-400">
+                            <div>• Tareas en cronograma: <strong class="text-white">${project.tasks ? project.tasks.length : 0}</strong></div>
+                            <div>• Tareas en pendientes: <strong class="text-white">${project.backlog ? project.backlog.length : 0}</strong></div>
+                            <div>• Presupuesto contractual: <strong class="text-amber-400">$${(project.contractBudget || 0).toLocaleString()}</strong></div>
+                        </div>
+                        <p class="text-rose-400 font-semibold text-[11px]">⚠️ Esta acción eliminará los datos de esta obra. Puedes respaldarla previamente desde "Base de Datos".</p>
+                    </div>
+
+                    <div class="p-3 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
+                        <button type="button" class="btn-close-modal px-3.5 py-1.5 rounded-xl bg-slate-700 text-slate-300 text-xs font-semibold">Cancelar</button>
+                        <button type="button" id="btn-confirm-delete-project" class="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1 shadow-md shadow-rose-600/20">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i> Eliminar Obra Definitivamente
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        const confirmBtn = document.getElementById('btn-confirm-delete-project');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                try {
+                    const res = this.store.deleteProject(projectId);
+                    if (res && res.success) {
+                        this.showToast(`Obra "${res.deletedName}" eliminada correctamente`, 'warning');
+                        this.closeModal();
+
+                        // Actualizar selector del header
+                        const selector = document.getElementById('project-select');
+                        if (selector) {
+                            selector.innerHTML = this.store.getAllProjects().map(p => `
+                                <option value="${p.id}">${p.code ? `[${p.code}] ` : ''}${p.name}</option>
+                            `).join('');
+                            selector.value = this.store.state.currentProjectId;
+                        }
+                    }
+                } catch (err) {
+                    this.showToast(err.message, 'error');
                 }
             });
         }
