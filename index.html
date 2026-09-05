@@ -264,7 +264,7 @@
                 </button>
 
                 <!-- Botón móvil para mostrar/ocultar bandeja de pendientes -->
-                <button id="btn-toggle-backlog" class="lg:hidden p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold flex items-center gap-1">
+                <button id="btn-toggle-backlog" class="hidden p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold items-center gap-1">
                     <i data-lucide="inbox" class="w-4 h-4"></i>
                     <span>Pendientes (<span id="backlog-count-badge">0</span>)</span>
                 </button>
@@ -284,7 +284,7 @@
     <main class="flex-grow flex overflow-hidden relative">
         
         <!-- BANDEJA LATERAL DE PENDIENTES (ÁREA DE PENDIENTES / BACKLOG) -->
-        <aside id="backlog-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 p-3 hidden lg:flex flex-col z-30 transition-all">
+        <aside id="backlog-sidebar" class="w-80 flex-shrink-0 bg-slate-900 border-r border-slate-800 p-3 hidden flex-col z-30 transition-all">
             
             <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">

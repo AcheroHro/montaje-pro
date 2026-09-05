@@ -134,7 +134,11 @@ class ProjectStore {
 
         const newHash = '#' + params.toString();
         if (window.location.hash !== newHash) {
-            history.replaceState(null, '', newHash);
+            if (typeof history !== 'undefined' && history.replaceState) {
+                history.replaceState(null, '', newHash);
+            } else {
+                window.location.hash = newHash;
+            }
         }
     }
 

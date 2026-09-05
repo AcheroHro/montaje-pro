@@ -223,6 +223,42 @@ class AppController {
             }
         });
 
+        // Control de visibilidad de la Bandeja Lateral de Pendientes según la pestaña
+        const backlogSidebar = document.getElementById('backlog-sidebar');
+        const btnToggleBacklog = document.getElementById('btn-toggle-backlog');
+
+        if (activeTab === 'estimated') {
+            // Pestaña Estimado: Ocultar totalmente la bandeja de tareas, solo mostrar el calendario limpio a pantalla completa
+            if (backlogSidebar) {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('lg:flex', 'flex');
+            }
+            if (btnToggleBacklog) {
+                btnToggleBacklog.classList.add('hidden');
+                btnToggleBacklog.classList.remove('flex');
+            }
+        } else if (activeTab === 'real') {
+            // Pestaña Real: Permitir bandeja de pendientes para gestión operativa en terreno
+            if (backlogSidebar) {
+                backlogSidebar.classList.remove('hidden');
+                backlogSidebar.classList.add('lg:flex');
+            }
+            if (btnToggleBacklog) {
+                btnToggleBacklog.classList.remove('hidden');
+                btnToggleBacklog.classList.add('flex');
+            }
+        } else if (activeTab === 'comparativa') {
+            // Pestaña Comparativa: Ocultar bandeja para maximizar la comparación visual en pantalla completa
+            if (backlogSidebar) {
+                backlogSidebar.classList.add('hidden');
+                backlogSidebar.classList.remove('lg:flex', 'flex');
+            }
+            if (btnToggleBacklog) {
+                btnToggleBacklog.classList.add('hidden');
+                btnToggleBacklog.classList.remove('flex');
+            }
+        }
+
         // Banner descriptivo según la pestaña activa
         const bannerEl = document.getElementById('tab-context-banner');
         if (bannerEl) {
@@ -230,14 +266,14 @@ class AppController {
                 bannerEl.innerHTML = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="calendar" class="w-4 h-4 text-blue-400"></i>
-                        <span><strong>Pestaña 1: Estimado (Cronograma Base)</strong> — Planificación contractual original. Arrastra tarjetas desde pendientes para calendarizar.</span>
+                        <span><strong>Pestaña 1: Estimado (Cronograma Base)</strong> — Calendario contractual oficial y tareas programadas en base a lo cotizado.</span>
                     </div>
                 `;
             } else if (activeTab === 'real') {
                 bannerEl.innerHTML = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
-                        <span><strong>Pestaña 2: Real (Ejecución en Terreno)</strong> — Monitoreo efectivo de obra. Usa el botón del check o abre la tarea para asentar partes diarios de avance y horas.</span>
+                        <span><strong>Pestaña 2: Real (Ejecución en Terreno)</strong> — Monitoreo efectivo de obra. Asienta partes diarios de avance y horas en cada tarea.</span>
                     </div>
                 `;
             } else if (activeTab === 'comparativa') {

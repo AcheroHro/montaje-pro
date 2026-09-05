@@ -1101,6 +1101,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
     // 8. MODAL: CREADOR LIMPIO DE TAREAS (SIN CREACIÓN PREVIA EN BACKLOG)
     // ======================================================================
     openTaskCreator() {
+        const p = this.store.getActiveProject();
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
                 <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
@@ -1138,6 +1139,21 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Duración Estimada (Días)</label>
                                 <input type="number" name="durationDays" min="1" max="60" value="3" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono" required>
+                            </div>
+                        </div>
+
+                        <!-- Fecha de inicio y destino -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-slate-300 font-semibold mb-1">Fecha de Inicio Programada</label>
+                                <input type="date" name="estimatedStart" value="${p ? p.startDate : '2026-09-01'}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono">
+                            </div>
+                            <div>
+                                <label class="block text-slate-300 font-semibold mb-1">Destino de la Tarea</label>
+                                <select name="targetDestination" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-semibold">
+                                    <option value="calendar" selected>Programar directo en Calendario</option>
+                                    <option value="backlog">Enviar a Bandeja de Pendientes</option>
+                                </select>
                             </div>
                         </div>
 
@@ -1181,7 +1197,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
                         <button type="button" class="btn-close-modal px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700">Cancelar</button>
                         <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20">
-                            <i data-lucide="check" class="w-4 h-4"></i> Guardar en Bandeja de Pendientes
+                            <i data-lucide="check" class="w-4 h-4"></i> Guardar Tarea
                         </button>
                     </div>
 
@@ -1209,18 +1225,23 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     machinery[r.id] = parseFloat(formData.get(`machinery_${r.id}`)) || 0;
                 });
 
+                const targetDest = formData.get('targetDestination');
+                const startDate = formData.get('estimatedStart');
+                const addToBacklog = targetDest === 'backlog';
+
                 const taskData = {
                     name: formData.get('name') || 'Nueva Tarea',
                     tag: formData.get('tag') || '',
                     discipline: formData.get('discipline') || 'piping',
                     durationDays: parseInt(formData.get('durationDays')) || 3,
+                    estimatedStart: startDate,
                     notes: formData.get('notes') || '',
                     labor,
                     machinery
                 };
 
-                this.store.createTask(taskData, true);
-                this.showToast('Tarea creada y añadida a la bandeja de pendientes');
+                this.store.createTask(taskData, addToBacklog);
+                this.showToast(addToBacklog ? 'Tarea creada y añadida a la bandeja de pendientes' : 'Tarea creada y programada en el calendario');
                 this.closeModal();
             });
         }
