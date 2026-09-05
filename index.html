@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MONTAJE-PRO | Gestión y Seguimiento de Obras y Proyectos de Montaje</title>
+    <title>ACHERO | Avance & Control de Obras</title>
     
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -43,15 +43,14 @@
             <!-- Branding & Obra Activa -->
             <div class="flex items-center gap-3">
                 <div class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 shadow-md shadow-amber-500/20">
-                        <i data-lucide="hard-hat" class="w-5 h-5"></i>
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 shadow-md shadow-amber-500/20 font-black text-xs tracking-wider select-none">
+                        HRO
                     </div>
                     <div>
-                        <h1 class="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1.5 leading-none">
-                            MONTAJE<span class="text-amber-400">PRO</span>
-                            <span class="text-[9px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">SPA</span>
+                        <h1 class="text-sm sm:text-base font-black tracking-wider text-white flex items-center gap-1.5 leading-none">
+                            ACHERO
                         </h1>
-                        <p class="text-[10px] text-slate-400 font-medium">Control de Obras & Piping Industrial</p>
+                        <p class="text-[10px] text-slate-400 font-medium tracking-tight">Avance & Control de Obras</p>
                     </div>
                 </div>
 
@@ -83,6 +82,12 @@
                 <button id="btn-open-catalog" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all" title="Gestionar catálogo de equipos, mano de obra y disciplinas">
                     <i data-lucide="sliders" class="w-3.5 h-3.5 text-amber-400"></i>
                     <span>Catálogo</span>
+                </button>
+
+                <!-- Botón Base de Datos (Respaldar y Transferir Obras) -->
+                <button id="btn-open-database" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm" title="Respaldar, exportar o transferir base de datos de obras">
+                    <i data-lucide="database" class="w-3.5 h-3.5 text-emerald-400"></i>
+                    <span>Base de Datos</span>
                 </button>
 
                 <!-- Botón Informe Ejecutivo Imprimible -->

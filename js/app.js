@@ -156,6 +156,14 @@ class AppController {
             });
         }
 
+        // Botón Base de Datos (Respaldar y Transferir Obras)
+        const btnDatabase = document.getElementById('btn-open-database');
+        if (btnDatabase) {
+            btnDatabase.addEventListener('click', () => {
+                this.modals.openDatabaseModal();
+            });
+        }
+
         // Toggle Bandeja de Pendientes (Lateral Izquierdo en Tab Real)
         const btnToggleBacklogReal = document.getElementById('btn-toggle-backlog-real');
         const backlogSidebar = document.getElementById('backlog-sidebar');

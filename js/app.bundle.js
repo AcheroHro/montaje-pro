@@ -808,6 +808,137 @@ class ProjectStore {
         this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
     }
 
+    /**
+     * Genera el payload de respaldo completo y dispara la descarga del archivo de base de datos
+     */
+    exportDatabase(fileExtension = 'json') {
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const timeStr = now.toTimeString().slice(0, 5).replace(':', '');
+        const data = {
+            app: 'ACHERO - Avance & Control de Obras',
+            schemaVersion: '1.0',
+            exportedAt: now.toISOString(),
+            exportedAtLocale: now.toLocaleString('es-AR'),
+            stats: {
+                projectsCount: this.state.projects.length,
+                tasksCount: this.state.projects.reduce((acc, p) => acc + (p.tasks ? p.tasks.length : 0) + (p.backlog ? p.backlog.length : 0), 0),
+                laborCount: (this.state.catalogs && this.state.catalogs.labor) ? this.state.catalogs.labor.length : 0,
+                machineryCount: (this.state.catalogs && this.state.catalogs.machinery) ? this.state.catalogs.machinery.length : 0,
+                disciplinesCount: (this.state.disciplines || []).length
+            },
+            projects: this.state.projects,
+            currentProjectId: this.state.currentProjectId,
+            catalogs: this.state.catalogs,
+            disciplines: this.state.disciplines
+        };
+
+        const jsonStr = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const fileName = `ACHERO_BaseDatos_${dateStr}_${timeStr}.${fileExtension}`;
+
+        if (typeof window !== 'undefined' && typeof window.URL !== 'undefined' && typeof window.URL.createObjectURL === 'function') {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            if (document.body) {
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+            window.URL.revokeObjectURL(url);
+        }
+
+        return { success: true, fileName, stats: data.stats };
+    }
+
+    /**
+     * Importa y valida una base de datos proveniente de un archivo JSON/.db
+     * Modo: 'overwrite' (reemplaza todo) | 'merge' (combina obras sin borrar las existentes)
+     */
+    importDatabase(importedData, mode = 'overwrite') {
+        if (!importedData || typeof importedData !== 'object') {
+            throw new Error('El archivo proporcionado no tiene un formato válido.');
+        }
+
+        const projects = importedData.projects;
+        if (!Array.isArray(projects) || projects.length === 0) {
+            throw new Error('El archivo no contiene un listado válido de obras (projects).');
+        }
+
+        if (mode === 'overwrite') {
+            this.state.projects = JSON.parse(JSON.stringify(projects));
+            this.state.currentProjectId = importedData.currentProjectId || projects[0].id;
+            if (importedData.catalogs) {
+                this.state.catalogs = JSON.parse(JSON.stringify(importedData.catalogs));
+            }
+            if (importedData.disciplines && Array.isArray(importedData.disciplines)) {
+                this.state.disciplines = JSON.parse(JSON.stringify(importedData.disciplines));
+            }
+        } else if (mode === 'merge') {
+            // Combinar proyectos
+            projects.forEach(impProj => {
+                const existingIdx = this.state.projects.findIndex(p => p.id === impProj.id);
+                if (existingIdx !== -1) {
+                    this.state.projects[existingIdx] = JSON.parse(JSON.stringify(impProj));
+                } else {
+                    this.state.projects.push(JSON.parse(JSON.stringify(impProj)));
+                }
+            });
+
+            // Combinar catálogos
+            if (importedData.catalogs) {
+                ['labor', 'machinery', 'equipment'].forEach(catKey => {
+                    const impItems = importedData.catalogs[catKey] || [];
+                    if (!this.state.catalogs[catKey]) this.state.catalogs[catKey] = [];
+                    impItems.forEach(item => {
+                        if (!this.state.catalogs[catKey].some(x => x.id === item.id)) {
+                            this.state.catalogs[catKey].push(JSON.parse(JSON.stringify(item)));
+                        }
+                    });
+                });
+            }
+
+            // Combinar disciplinas
+            if (importedData.disciplines && Array.isArray(importedData.disciplines)) {
+                importedData.disciplines.forEach(disc => {
+                    if (!this.state.disciplines.some(d => d.id === disc.id)) {
+                        this.state.disciplines.push(JSON.parse(JSON.stringify(disc)));
+                    }
+                });
+            }
+        }
+
+        this.notify();
+        return {
+            success: true,
+            importedProjectsCount: projects.length,
+            totalProjectsCount: this.state.projects.length
+        };
+    }
+
+    /**
+     * Retorna estadísticas del almacenamiento local actual
+     */
+    getDatabaseStats() {
+        const rawJson = typeof localStorage !== 'undefined' ? (localStorage.getItem(STORAGE_KEY) || '') : '';
+        const sizeBytes = new Blob([rawJson]).size;
+        const sizeKB = (sizeBytes / 1024).toFixed(1);
+
+        const totalTasks = this.state.projects.reduce((sum, p) => {
+            return sum + (p.tasks ? p.tasks.length : 0) + (p.backlog ? p.backlog.length : 0);
+        }, 0);
+
+        return {
+            projectsCount: this.state.projects.length,
+            tasksCount: totalTasks,
+            sizeKB: sizeKB,
+            sizeBytes: sizeBytes,
+            currentProjectName: this.getActiveProject()?.name || 'N/A'
+        };
+    }
+
     // Sincronización con Hash de la URL para compartir enlaces y modo supervisión
     syncFromUrl() {
         if (typeof window === 'undefined') return;
@@ -4391,6 +4522,236 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
 
         if (window.lucide) window.lucide.createIcons();
     }
+
+    // ======================================================================
+    // 10. MODAL: GESTIÓN DE BASE DE DATOS Y RESPALDOS (EXPORTAR / IMPORTAR)
+    // ======================================================================
+    openDatabaseModal() {
+        const stats = this.store.getDatabaseStats();
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-md animate-fade-in overflow-y-auto">
+                <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden my-auto max-h-[95vh] flex flex-col">
+                    
+                    <!-- Header -->
+                    <div class="p-4 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                                <i data-lucide="database" class="w-4 h-4"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
+                                    Base de Datos y Respaldos de Obras
+                                </h3>
+                                <p class="text-[10px] text-slate-400">Exporta para transferir entre móvil y PC, o restaura respaldos</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- Cuerpo scrollable -->
+                    <div class="p-5 space-y-5 overflow-y-auto custom-scrollbar text-xs">
+                        
+                        <!-- Panel de Estado del Almacenamiento Local -->
+                        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="font-bold text-slate-300 flex items-center gap-1.5">
+                                    <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-cyan-400"></i> Estado Actual del Almacenamiento
+                                </span>
+                                <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-semibold">Local-First (Activo)</span>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2.5 text-center mt-2">
+                                <div class="bg-slate-900/90 border border-slate-800/80 rounded-lg p-2">
+                                    <span class="text-[10px] text-slate-400 block">Obras Registradas</span>
+                                    <span class="text-base font-extrabold text-white font-mono">${stats.projectsCount}</span>
+                                </div>
+                                <div class="bg-slate-900/90 border border-slate-800/80 rounded-lg p-2">
+                                    <span class="text-[10px] text-slate-400 block">Tareas Totales</span>
+                                    <span class="text-base font-extrabold text-amber-400 font-mono">${stats.tasksCount}</span>
+                                </div>
+                                <div class="bg-slate-900/90 border border-slate-800/80 rounded-lg p-2">
+                                    <span class="text-[10px] text-slate-400 block">Espacio en Memoria</span>
+                                    <span class="text-base font-extrabold text-emerald-400 font-mono">${stats.sizeKB} KB</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SECCIÓN 1: EXPORTAR / RESPALDAR -->
+                        <div class="bg-slate-800/40 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div>
+                                <h4 class="text-xs font-bold text-white flex items-center gap-1.5">
+                                    <i data-lucide="download" class="w-4 h-4 text-emerald-400"></i> 1. Exportar y Descargar Base de Datos
+                                </h4>
+                                <p class="text-[11px] text-slate-400 mt-1">
+                                    Genera un archivo de respaldo con todas tus obras, tareas, partes diarios y catálogos. Puedes enviarlo por WhatsApp, email o guardarlo en tu computadora o celular para transferir toda la información.
+                                </p>
+                            </div>
+
+                            <div class="flex items-center gap-2 pt-1">
+                                <button type="button" id="btn-action-export-db" class="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all">
+                                    <i data-lucide="download" class="w-4 h-4"></i>
+                                    <span>Descargar Respaldo Completo (.db / .json)</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- SECCIÓN 2: IMPORTAR / RESTAURAR -->
+                        <div class="bg-slate-800/40 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div>
+                                <h4 class="text-xs font-bold text-white flex items-center gap-1.5">
+                                    <i data-lucide="upload-cloud" class="w-4 h-4 text-cyan-400"></i> 2. Importar o Transferir Base de Datos
+                                </h4>
+                                <p class="text-[11px] text-slate-400 mt-1">
+                                    Selecciona un archivo de respaldo (.json o .db) generado previamente para restaurar las obras en este dispositivo.
+                                </p>
+                            </div>
+
+                            <!-- Selector de archivo oculto -->
+                            <input type="file" id="input-import-db-file" accept=".json,.db" class="hidden">
+
+                            <div id="drop-zone-db" class="border-2 border-dashed border-slate-700 hover:border-cyan-500/60 rounded-xl p-4 text-center cursor-pointer transition-colors bg-slate-950/40">
+                                <i data-lucide="file-up" class="w-7 h-7 mx-auto mb-1.5 text-cyan-400"></i>
+                                <span class="text-xs font-semibold text-slate-200 block">Haz clic para seleccionar el archivo de respaldo</span>
+                                <span class="text-[10px] text-slate-500">Formatos compatibles: .json o .db</span>
+                            </div>
+
+                            <!-- Caja de Previsualización tras seleccionar archivo -->
+                            <div id="db-preview-container" class="hidden bg-slate-950 border border-cyan-500/40 rounded-xl p-3.5 space-y-2.5">
+                                <div class="flex items-center justify-between text-xs font-bold text-cyan-300">
+                                    <span class="flex items-center gap-1.5">
+                                        <i data-lucide="file-check-2" class="w-4 h-4 text-emerald-400"></i> Archivo Reconocido con Éxito
+                                    </span>
+                                    <span id="db-preview-filename" class="text-[10px] font-mono text-slate-400 truncate max-w-[200px]"></span>
+                                </div>
+                                
+                                <div id="db-preview-details" class="text-[11px] text-slate-300 space-y-1 pt-1.5 border-t border-slate-800 font-mono">
+                                    <!-- Dinámico -->
+                                </div>
+
+                                <!-- Modos de Importación -->
+                                <div class="pt-2 border-t border-slate-800 space-y-2">
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase">Modo de Restauración:</label>
+                                    <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-900 border border-slate-700 cursor-pointer hover:border-amber-500 transition-colors">
+                                        <input type="radio" name="db-import-mode" value="overwrite" checked class="mt-0.5 text-amber-500">
+                                        <div>
+                                            <span class="font-bold text-white block">Restauración Completa (Sobrescribir)</span>
+                                            <span class="text-[10px] text-slate-400">Reemplaza el estado de este dispositivo con los datos exactos del archivo (Recomendado).</span>
+                                        </div>
+                                    </label>
+                                    <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-900 border border-slate-700 cursor-pointer hover:border-cyan-500 transition-colors">
+                                        <input type="radio" name="db-import-mode" value="merge" class="mt-0.5 text-cyan-500">
+                                        <div>
+                                            <span class="font-bold text-white block">Fusionar / Combinar Obras</span>
+                                            <span class="text-[10px] text-slate-400">Agrega las obras del archivo sin eliminar las obras que ya tienes en este dispositivo.</span>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <button type="button" id="btn-confirm-import-db" class="w-full mt-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/20 transition-all">
+                                    <i data-lucide="check" class="w-4 h-4"></i>
+                                    <span>Confirmar e Importar Base de Datos</span>
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="p-3 bg-slate-950/70 border-t border-slate-800 flex items-center justify-between">
+                        <span class="text-[10px] text-slate-500">ACHERO • Base de Datos Portátil SQLite/JSON</span>
+                        <button type="button" class="btn-close-modal px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cerrar</button>
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        // Listeners de Cierre
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        // Listener de Exportar
+        const btnExport = this.modalRoot.querySelector('#btn-action-export-db');
+        if (btnExport) {
+            btnExport.addEventListener('click', () => {
+                const res = this.store.exportDatabase('json');
+                this.showToast(`Base de datos descargada: ${res.fileName}`);
+            });
+        }
+
+        // Listener de Selección de Archivo
+        const dropZone = this.modalRoot.querySelector('#drop-zone-db');
+        const fileInput = this.modalRoot.querySelector('#input-import-db-file');
+        const previewContainer = this.modalRoot.querySelector('#db-preview-container');
+        const previewFilename = this.modalRoot.querySelector('#db-preview-filename');
+        const previewDetails = this.modalRoot.querySelector('#db-preview-details');
+        const btnConfirmImport = this.modalRoot.querySelector('#btn-confirm-import-db');
+
+        let loadedData = null;
+
+        if (dropZone && fileInput) {
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const parsed = JSON.parse(event.target.result);
+                        if (!parsed || !Array.isArray(parsed.projects)) {
+                            throw new Error('El archivo no contiene un listado de obras válido.');
+                        }
+
+                        loadedData = parsed;
+                        previewFilename.textContent = file.name;
+                        
+                        const projectNames = parsed.projects.map(p => p.name).slice(0, 3).join(', ');
+                        const extraCount = parsed.projects.length > 3 ? ` y ${parsed.projects.length - 3} más` : '';
+                        const totalTasks = parsed.projects.reduce((acc, p) => acc + (p.tasks ? p.tasks.length : 0) + (p.backlog ? p.backlog.length : 0), 0);
+
+                        previewDetails.innerHTML = `
+                            <div><strong>• Obras encontradas (${parsed.projects.length}):</strong> ${projectNames}${extraCount}</div>
+                            <div><strong>• Tareas contenidas:</strong> ${totalTasks} tareas</div>
+                            <div><strong>• Fecha de exportación:</strong> ${parsed.exportedAtLocale || parsed.exportedAt || 'Desconocida'}</div>
+                            <div><strong>• Aplicación origen:</strong> ${parsed.app || 'ACHERO'}</div>
+                        `;
+
+                        previewContainer.classList.remove('hidden');
+                        if (window.lucide) window.lucide.createIcons();
+                    } catch (err) {
+                        alert('Error al leer el archivo de base de datos: ' + err.message);
+                        loadedData = null;
+                        previewContainer.classList.add('hidden');
+                    }
+                };
+                reader.readAsText(file);
+            });
+        }
+
+        // Listener de Confirmar Importación
+        if (btnConfirmImport) {
+            btnConfirmImport.addEventListener('click', () => {
+                if (!loadedData) return;
+
+                const selectedMode = this.modalRoot.querySelector('input[name="db-import-mode"]:checked')?.value || 'overwrite';
+                try {
+                    const res = this.store.importDatabase(loadedData, selectedMode);
+                    this.showToast(`Base de datos importada exitosamente (${res.importedProjectsCount} obras sincronizadas)`);
+                    this.closeModal();
+                } catch (err) {
+                    alert('Error al importar la base de datos: ' + err.message);
+                }
+            });
+        }
+
+        if (window.lucide) window.lucide.createIcons();
+    }
 }
 
 
@@ -4548,6 +4909,14 @@ class AppController {
         if (btnCatalog) {
             btnCatalog.addEventListener('click', () => {
                 this.modals.openCatalogManagerModal();
+            });
+        }
+
+        // Botón Base de Datos (Respaldar y Transferir Obras)
+        const btnDatabase = document.getElementById('btn-open-database');
+        if (btnDatabase) {
+            btnDatabase.addEventListener('click', () => {
+                this.modals.openDatabaseModal();
             });
         }
 

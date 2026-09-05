@@ -101,6 +101,137 @@ class ProjectStore {
         this.state.disciplines = JSON.parse(JSON.stringify(DISCIPLINES));
     }
 
+    /**
+     * Genera el payload de respaldo completo y dispara la descarga del archivo de base de datos
+     */
+    exportDatabase(fileExtension = 'json') {
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const timeStr = now.toTimeString().slice(0, 5).replace(':', '');
+        const data = {
+            app: 'ACHERO - Avance & Control de Obras',
+            schemaVersion: '1.0',
+            exportedAt: now.toISOString(),
+            exportedAtLocale: now.toLocaleString('es-AR'),
+            stats: {
+                projectsCount: this.state.projects.length,
+                tasksCount: this.state.projects.reduce((acc, p) => acc + (p.tasks ? p.tasks.length : 0) + (p.backlog ? p.backlog.length : 0), 0),
+                laborCount: (this.state.catalogs && this.state.catalogs.labor) ? this.state.catalogs.labor.length : 0,
+                machineryCount: (this.state.catalogs && this.state.catalogs.machinery) ? this.state.catalogs.machinery.length : 0,
+                disciplinesCount: (this.state.disciplines || []).length
+            },
+            projects: this.state.projects,
+            currentProjectId: this.state.currentProjectId,
+            catalogs: this.state.catalogs,
+            disciplines: this.state.disciplines
+        };
+
+        const jsonStr = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const fileName = `ACHERO_BaseDatos_${dateStr}_${timeStr}.${fileExtension}`;
+
+        if (typeof window !== 'undefined' && typeof window.URL !== 'undefined' && typeof window.URL.createObjectURL === 'function') {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            if (document.body) {
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+            window.URL.revokeObjectURL(url);
+        }
+
+        return { success: true, fileName, stats: data.stats };
+    }
+
+    /**
+     * Importa y valida una base de datos proveniente de un archivo JSON/.db
+     * Modo: 'overwrite' (reemplaza todo) | 'merge' (combina obras sin borrar las existentes)
+     */
+    importDatabase(importedData, mode = 'overwrite') {
+        if (!importedData || typeof importedData !== 'object') {
+            throw new Error('El archivo proporcionado no tiene un formato válido.');
+        }
+
+        const projects = importedData.projects;
+        if (!Array.isArray(projects) || projects.length === 0) {
+            throw new Error('El archivo no contiene un listado válido de obras (projects).');
+        }
+
+        if (mode === 'overwrite') {
+            this.state.projects = JSON.parse(JSON.stringify(projects));
+            this.state.currentProjectId = importedData.currentProjectId || projects[0].id;
+            if (importedData.catalogs) {
+                this.state.catalogs = JSON.parse(JSON.stringify(importedData.catalogs));
+            }
+            if (importedData.disciplines && Array.isArray(importedData.disciplines)) {
+                this.state.disciplines = JSON.parse(JSON.stringify(importedData.disciplines));
+            }
+        } else if (mode === 'merge') {
+            // Combinar proyectos
+            projects.forEach(impProj => {
+                const existingIdx = this.state.projects.findIndex(p => p.id === impProj.id);
+                if (existingIdx !== -1) {
+                    this.state.projects[existingIdx] = JSON.parse(JSON.stringify(impProj));
+                } else {
+                    this.state.projects.push(JSON.parse(JSON.stringify(impProj)));
+                }
+            });
+
+            // Combinar catálogos
+            if (importedData.catalogs) {
+                ['labor', 'machinery', 'equipment'].forEach(catKey => {
+                    const impItems = importedData.catalogs[catKey] || [];
+                    if (!this.state.catalogs[catKey]) this.state.catalogs[catKey] = [];
+                    impItems.forEach(item => {
+                        if (!this.state.catalogs[catKey].some(x => x.id === item.id)) {
+                            this.state.catalogs[catKey].push(JSON.parse(JSON.stringify(item)));
+                        }
+                    });
+                });
+            }
+
+            // Combinar disciplinas
+            if (importedData.disciplines && Array.isArray(importedData.disciplines)) {
+                importedData.disciplines.forEach(disc => {
+                    if (!this.state.disciplines.some(d => d.id === disc.id)) {
+                        this.state.disciplines.push(JSON.parse(JSON.stringify(disc)));
+                    }
+                });
+            }
+        }
+
+        this.notify();
+        return {
+            success: true,
+            importedProjectsCount: projects.length,
+            totalProjectsCount: this.state.projects.length
+        };
+    }
+
+    /**
+     * Retorna estadísticas del almacenamiento local actual
+     */
+    getDatabaseStats() {
+        const rawJson = typeof localStorage !== 'undefined' ? (localStorage.getItem(STORAGE_KEY) || '') : '';
+        const sizeBytes = new Blob([rawJson]).size;
+        const sizeKB = (sizeBytes / 1024).toFixed(1);
+
+        const totalTasks = this.state.projects.reduce((sum, p) => {
+            return sum + (p.tasks ? p.tasks.length : 0) + (p.backlog ? p.backlog.length : 0);
+        }, 0);
+
+        return {
+            projectsCount: this.state.projects.length,
+            tasksCount: totalTasks,
+            sizeKB: sizeKB,
+            sizeBytes: sizeBytes,
+            currentProjectName: this.getActiveProject()?.name || 'N/A'
+        };
+    }
+
     // Sincronización con Hash de la URL para compartir enlaces y modo supervisión
     syncFromUrl() {
         if (typeof window === 'undefined') return;
