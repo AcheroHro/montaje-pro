@@ -110,6 +110,25 @@
     border-color: rgba(244, 63, 94, 0.5) !important;
 }
 
+/* Pausas visuales de días no laborables directamente sobre las barras de tareas */
+.task-bar-pause-weekend {
+    background-color: rgba(15, 23, 42, 0.70);
+    background-image: repeating-linear-gradient(45deg, rgba(30, 41, 59, 0.6) 0, rgba(30, 41, 59, 0.6) 6px, rgba(15, 23, 42, 0.85) 6px, rgba(15, 23, 42, 0.85) 12px);
+    backdrop-filter: blur(1px);
+}
+
+.task-bar-pause-holiday-paid {
+    background-color: rgba(76, 29, 149, 0.55);
+    background-image: repeating-linear-gradient(-45deg, rgba(126, 34, 206, 0.4) 0, rgba(126, 34, 206, 0.4) 6px, rgba(76, 29, 149, 0.8) 6px, rgba(76, 29, 149, 0.8) 12px);
+    backdrop-filter: blur(1px);
+}
+
+.task-bar-pause-holiday-unpaid {
+    background-color: rgba(136, 19, 55, 0.55);
+    background-image: repeating-linear-gradient(-45deg, rgba(225, 29, 72, 0.4) 0, rgba(225, 29, 72, 0.4) 6px, rgba(136, 19, 55, 0.8) 6px, rgba(136, 19, 55, 0.8) 12px);
+    backdrop-filter: blur(1px);
+}
+
 /* ==========================================================================
    ESTILOS DE IMPRESIÓN Y EXPORTACIÓN A PDF (A4 PORTRAIT Y A4 LANDSCAPE)
    ========================================================================== */
@@ -239,5 +258,17 @@
         background-color: #f5f3ff !important;
         border-right: 1.5px solid #a855f7 !important;
         background-image: repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(168, 85, 247, 0.2) 6px, rgba(168, 85, 247, 0.2) 12px) !important;
+    }
+
+    .task-bar-pause-weekend {
+        background-color: #f1f5f9 !important;
+        background-image: repeating-linear-gradient(45deg, #cbd5e1 0, #cbd5e1 3px, #f1f5f9 3px, #f1f5f9 6px) !important;
+        border-right: 1px solid #94a3b8 !important;
+    }
+
+    .task-bar-pause-holiday-paid {
+        background-color: #f3e8ff !important;
+        background-image: repeating-linear-gradient(-45deg, #d8b4fe 0, #d8b4fe 3px, #f3e8ff 3px, #f3e8ff 6px) !important;
+        border-right: 1.5px solid #a855f7 !important;
     }
 }

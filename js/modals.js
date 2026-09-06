@@ -3614,9 +3614,9 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             const startDayStr = (reportType === 'real') 
                 ? (task.realStart || task.estimatedStart) 
                 : task.estimatedStart;
-            const dur = Math.max(1, task.durationDays || 1);
-            const startIndex = calendarDates.indexOf(startDayStr);
-            const isPlaced = startIndex !== -1;
+            const endDayStr = (reportType === 'real')
+                ? (task.realEnd || task.estimatedEnd)
+                : task.estimatedEnd;
 
             let deltaDays = 0;
             if (task.estimatedEnd && task.realEnd) {
@@ -3625,12 +3625,55 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                 deltaDays = Math.round((realTime - estTime) / (1000 * 60 * 60 * 24));
             }
 
+            const dur = Math.max(1, task.durationDays || 1);
+            const startIndex = calendarDates.indexOf(startDayStr);
+            const endIndex = endDayStr ? calendarDates.indexOf(endDayStr) : -1;
+            const isPlaced = startIndex !== -1;
+
+            const calendarSpan = (isPlaced && endIndex !== -1 && endIndex >= startIndex)
+                ? (endIndex - startIndex + 1)
+                : dur;
+
             let leftPct = 0;
             let widthPct = 0;
             if (isPlaced) {
                 leftPct = (startIndex / totalDays) * 100;
-                widthPct = Math.min(100 - leftPct, (dur / totalDays) * 100);
+                widthPct = Math.min(100 - leftPct, (calendarSpan / totalDays) * 100);
             }
+
+            const taskDates = [];
+            if (isPlaced) {
+                for (let i = 0; i < calendarSpan; i++) {
+                    const idx = startIndex + i;
+                    if (idx < calendarDates.length) taskDates.push(calendarDates[idx]);
+                }
+            }
+            const printNonWorkingOverlay = isPlaced ? `
+                <div class="absolute inset-0 flex pointer-events-none z-10">
+                    ${taskDates.map(d => {
+                        const dayStatus = this.store.getDayStatus(d, p);
+                        if (dayStatus.isHoliday && dayStatus.isPaid) {
+                            return `
+                                <div class="task-bar-pause-holiday-paid h-full flex flex-col items-center justify-center text-[7px] font-black text-purple-900 border-r border-purple-400"
+                                     style="width: ${(1 / calendarSpan) * 100}%;"
+                                     title="Feriado Pago: ${dayStatus.name}">
+                                    <span>FER</span>
+                                </div>
+                            `;
+                        }
+                        if (dayStatus.isWeekend) {
+                            return `
+                                <div class="task-bar-pause-weekend h-full flex flex-col items-center justify-center text-[7px] font-bold text-slate-600 border-r border-slate-300"
+                                     style="width: ${(1 / calendarSpan) * 100}%;"
+                                     title="Fin de Semana">
+                                    <span>FIN</span>
+                                </div>
+                            `;
+                        }
+                        return `<div class="h-full border-r border-transparent" style="width: ${(1 / calendarSpan) * 100}%;"></div>`;
+                    }).join('')}
+                </div>
+            ` : '';
 
             return `
                 <div class="print-gantt-row flex items-stretch border-b border-slate-200 text-xs min-h-[38px] hover:bg-slate-50">
@@ -3647,7 +3690,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         </div>
                         <div class="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 font-mono">
                             <span class="uppercase font-bold" style="color: ${discStyle.borderHex} !important;">${discStyle.name.split(' ')[0]}</span>
-                            <span>• ${task.durationDays}d</span>
+                            <span>• ${task.durationDays}d lab (${calendarSpan}d)</span>
                             ${reportType !== 'estimated' ? `<span class="font-bold ${task.progress >= 100 ? 'text-blue-600' : 'text-emerald-700'}">${task.progress || 0}%</span>` : ''}
                         </div>
                     </div>
@@ -3678,32 +3721,35 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                 
                                 ${reportType === 'estimated' ? `
                                     <!-- MODO ESTIMADO: BARRA PLANIFICADA CON COLOR DE DISCIPLINA EXACTO -->
-                                    <div class="h-full rounded ${discStyle.bgClass} ${discStyle.textClass} border ${discStyle.borderClass} shadow-sm flex items-center justify-between px-2 text-[10px] overflow-hidden"
+                                    <div class="h-full rounded ${discStyle.bgClass} ${discStyle.textClass} border ${discStyle.borderClass} shadow-sm flex items-center justify-between px-2 text-[10px] overflow-hidden relative"
                                          style="background-color: ${discStyle.hex} !important; border-color: ${discStyle.borderHex} !important; color: ${discStyle.textHex} !important;">
-                                        <span class="truncate">${task.tag ? `${task.tag} ` : ''}${task.name}</span>
-                                        <span class="font-mono text-[9px] shrink-0 pl-1 font-black">${task.durationDays}d</span>
+                                        ${printNonWorkingOverlay}
+                                        <span class="truncate relative z-20">${task.tag ? `${task.tag} ` : ''}${task.name}</span>
+                                        <span class="font-mono text-[9px] shrink-0 pl-1 font-black relative z-20">${task.durationDays}d</span>
                                     </div>
                                 ` : (reportType === 'real' ? `
                                     <!-- MODO REAL O EN EJECUCIÓN: BARRA CON AVANCE REAL -->
                                     <div class="h-full rounded bg-slate-200 border border-slate-400 overflow-hidden shadow-sm relative flex items-center">
                                         <div class="h-full ${task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600'} transition-all"
                                              style="width: ${task.progress || 0}%;"></div>
-                                        <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">
+                                        ${printNonWorkingOverlay}
+                                        <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'} relative z-20">
                                             <span class="truncate">${task.tag || ''} ${task.name}</span>
                                             <span class="font-mono shrink-0 pl-1 font-black">${task.progress || 0}%</span>
                                         </div>
                                     </div>
                                 ` : `
                                     <!-- MODO COMPARATIVA / CONTROL: DOBLE BARRA (PLAN VS REAL) -->
-                                    <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm">
+                                    <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm relative">
+                                        ${printNonWorkingOverlay}
                                         <!-- Barra Superior: Plan con color de disciplina -->
-                                        <div class="h-[46%] rounded ${discStyle.bgClass} text-white flex items-center justify-between px-1.5 text-[8px] font-mono shadow-xs"
+                                        <div class="h-[46%] rounded ${discStyle.bgClass} text-white flex items-center justify-between px-1.5 text-[8px] font-mono shadow-xs relative z-20"
                                              style="background-color: ${discStyle.hex} !important; color: ${discStyle.textHex} !important;">
                                             <span class="truncate font-semibold">Plan: ${task.durationDays}d</span>
                                             <span class="shrink-0 font-bold">${task.tag || ''}</span>
                                         </div>
                                         <!-- Barra Inferior: Real con Desvío -->
-                                        <div class="h-[48%] relative rounded bg-slate-300 overflow-hidden border border-slate-400">
+                                        <div class="h-[48%] relative rounded bg-slate-300 overflow-hidden border border-slate-400 z-20">
                                             <div class="h-full ${deltaDays > 0 ? 'bg-rose-600' : (task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600')}"
                                                  style="width: ${task.progress || 0}%;"></div>
                                             <div class="absolute inset-0 flex items-center justify-between px-1.5 text-[8px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">

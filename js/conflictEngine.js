@@ -37,15 +37,47 @@ export function getDatesRange(startDateStr, endDateStr) {
 }
 
 /**
- * Calcula la fecha de fin a partir de una fecha de inicio y una duración en días (mínimo 1 día)
+ * Calcula la fecha de fin a partir de una fecha de inicio y una duración en días (mínimo 1 día).
+ * Si se especifica calendarConfig, contabiliza únicamente días laborables (saltando fines de semana y feriados/paradas).
  */
-export function calculateEndDate(startDateStr, durationDays) {
+export function calculateEndDate(startDateStr, durationDays, calendarConfig = null) {
     if (!startDateStr) return null;
     const dur = Math.max(1, parseInt(durationDays) || 1);
     const [sYear, sMonth, sDay] = startDateStr.split('-').map(Number);
-    const start = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
-    start.setDate(start.getDate() + (dur - 1));
-    return formatDateLocal(start);
+    const curr = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
+
+    if (!calendarConfig) {
+        curr.setDate(curr.getDate() + (dur - 1));
+        return formatDateLocal(curr);
+    }
+
+    const workWeek = calendarConfig.workWeek || [1, 2, 3, 4, 5];
+    const holidays = calendarConfig.holidays || {};
+
+    let workDaysCount = 0;
+    let safetyCounter = 0;
+    const maxDays = Math.max(1000, dur * 10);
+
+    while (safetyCounter < maxDays) {
+        safetyCounter++;
+        const dStr = formatDateLocal(curr);
+        let isWorking = true;
+
+        if (holidays[dStr]) {
+            isWorking = Boolean(holidays[dStr].isWorking);
+        } else {
+            isWorking = workWeek.includes(curr.getDay());
+        }
+
+        if (isWorking) {
+            workDaysCount++;
+            if (workDaysCount >= dur) {
+                return dStr;
+            }
+        }
+        curr.setDate(curr.getDate() + 1);
+    }
+    return formatDateLocal(curr);
 }
 
 /**
@@ -72,7 +104,7 @@ export function getResourceMeta(resourceId, customCatalog = null) {
  * @param {Object} customCatalog - Catálogo dinámico opcional
  * @returns {Object} { conflictsByDate, taskConflicts, dailyLoad, totalConflictsCount }
  */
-export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null) {
+export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null, calendarConfig = null) {
     const dailyLoad = {}; // date -> { resourceId: { total: number, tasks: [taskId] } }
     const conflictsByDate = {}; // date -> [ { resourceId, name, unit, required, limit, excess, taskIds } ]
     const taskConflicts = {}; // taskId -> [ { date, resourceId, resourceName, required, limit, conflictingWithTaskIds } ]
@@ -107,6 +139,19 @@ export function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'est
 
         // Por cada día de la tarea, computar consumo diario (asumiendo jornada de 8h o prorrateo)
         dates.forEach(date => {
+            if (calendarConfig) {
+                const workWeek = calendarConfig.workWeek || [1, 2, 3, 4, 5];
+                const holidays = calendarConfig.holidays || {};
+                let isWorking = true;
+                if (holidays[date]) {
+                    isWorking = Boolean(holidays[date].isWorking);
+                } else {
+                    const [y, m, d] = date.split('-').map(Number);
+                    isWorking = workWeek.includes(new Date(y, m - 1, d, 12, 0, 0).getDay());
+                }
+                if (!isWorking) return; // No hay actividad productiva en días no laborables
+            }
+
             if (!dailyLoad[date]) dailyLoad[date] = {};
 
             // Mano de obra (HH distribuidas en días -> dotación estimada = HH / (dur * 8h))

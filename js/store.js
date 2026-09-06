@@ -330,7 +330,15 @@ class ProjectStore {
     getConflicts() {
         const project = this.getActiveProject();
         if (!project) return { conflictsByDate: {}, taskConflicts: {}, dailyLoad: {}, totalConflictsCount: 0 };
-        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
+        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs(), project.calendarConfig);
+    }
+
+    /**
+     * Calcula la fecha de fin de una tarea considerando días laborables del calendario de obra
+     */
+    calculateTaskEndDate(startDateStr, durationDays, project = this.getActiveProject()) {
+        const calConfig = project ? project.calendarConfig : null;
+        return calculateEndDate(startDateStr, durationDays, calConfig);
     }
 
     /**
@@ -492,6 +500,17 @@ class ProjectStore {
                 isPaid: false
             };
         }
+
+        // Recalcular dinámicamente fechas fin de las tareas según el nuevo calendario laboral
+        (project.tasks || []).forEach(t => {
+            const dur = Math.max(1, t.durationDays || 1);
+            if (t.estimatedStart) {
+                t.estimatedEnd = this.calculateTaskEndDate(t.estimatedStart, dur, project);
+            }
+            if (t.realStart) {
+                t.realEnd = this.calculateTaskEndDate(t.realStart, dur, project);
+            }
+        });
 
         this.notify();
         return true;
@@ -909,7 +928,7 @@ class ProjectStore {
         if (!task) return;
 
         const dur = Math.max(1, task.durationDays || 1);
-        const newEndDate = calculateEndDate(targetDate, dur);
+        const newEndDate = this.calculateTaskEndDate(targetDate, dur, project);
 
         if (currentTab === 'real') {
             task.realStart = targetDate;
@@ -1003,12 +1022,12 @@ class ProjectStore {
         // Recalcular fin si cambió duración o inicio
         if (updatedFields.durationDays || updatedFields.estimatedStart) {
             if (task.estimatedStart) {
-                task.estimatedEnd = calculateEndDate(task.estimatedStart, task.durationDays);
+                task.estimatedEnd = this.calculateTaskEndDate(task.estimatedStart, task.durationDays, project);
             }
         }
         if (updatedFields.realStart || (updatedFields.durationDays && task.realStart && !updatedFields.realEnd)) {
             if (task.realStart && !updatedFields.realEnd) {
-                task.realEnd = calculateEndDate(task.realStart, task.durationDays);
+                task.realEnd = this.calculateTaskEndDate(task.realStart, task.durationDays, project);
             }
         }
 
@@ -1261,7 +1280,7 @@ class ProjectStore {
             discipline: taskData.discipline || 'piping',
             durationDays: parseInt(taskData.durationDays) || 3,
             estimatedStart: addToBacklog ? null : (taskData.estimatedStart || '2026-09-01'),
-            estimatedEnd: addToBacklog ? null : calculateEndDate(taskData.estimatedStart || '2026-09-01', taskData.durationDays || 3),
+            estimatedEnd: addToBacklog ? null : this.calculateTaskEndDate(taskData.estimatedStart || '2026-09-01', taskData.durationDays || 3, project),
             realStart: null,
             realEnd: null,
             progress: 0,

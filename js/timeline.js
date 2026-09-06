@@ -693,11 +693,75 @@ export class TimelineRenderer {
 
         const dur = Math.max(1, task.durationDays || 1);
         const startIndex = calendarDates.indexOf(startDayStr);
+        const endIndex = endDayStr ? calendarDates.indexOf(endDayStr) : -1;
 
         // Si la tarea no tiene fecha en este rango
         const isPlaced = startIndex !== -1;
         const leftOffset = isPlaced ? (startIndex * this.columnWidth) : 0;
-        const barWidth = Math.max(this.columnWidth * 0.9, dur * this.columnWidth);
+
+        // Ancho de barra y span de días calendario (días corridos reales que abarca la tarea)
+        const calendarSpan = (isPlaced && endIndex !== -1 && endIndex >= startIndex) 
+            ? (endIndex - startIndex + 1) 
+            : dur;
+        const barWidth = Math.max(this.columnWidth * 0.9, calendarSpan * this.columnWidth);
+
+        // Desglose de fechas que abarca la tarea en el calendario
+        const taskDates = [];
+        if (isPlaced) {
+            for (let i = 0; i < calendarSpan; i++) {
+                const idx = startIndex + i;
+                if (idx < calendarDates.length) {
+                    taskDates.push(calendarDates[idx]);
+                }
+            }
+        }
+        const nonWorkingDaysInTask = taskDates.filter(d => !this.store.getDayStatus(d).isWorking);
+        const nonWorkingCount = nonWorkingDaysInTask.length;
+
+        // Capa visual de pausas por días no laborables superpuesta de forma nítida en la barra
+        const nonWorkingOverlayHtml = isPlaced ? `
+            <div class="absolute inset-0 flex pointer-events-none z-10">
+                ${taskDates.map(d => {
+                    const dayStatus = this.store.getDayStatus(d);
+                    if (dayStatus.isHoliday && dayStatus.isPaid) {
+                        return `
+                            <div class="task-bar-pause-holiday-paid h-full border-r border-purple-500/60 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Feriado Pago: ${dayStatus.name} (Pausa de Tarea en Terreno)">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-black bg-purple-950/95 text-purple-200 border border-purple-400 shadow-md">
+                                    ${this.columnWidth < 65 ? 'FER' : '🟣 Feriado $'}
+                                </span>
+                                ${this.columnWidth >= 85 ? `<span class="text-[7.5px] font-extrabold text-purple-300 leading-none mt-0.5 tracking-tight">Pausa</span>` : ''}
+                            </div>
+                        `;
+                    }
+                    if (dayStatus.isWeekend) {
+                        return `
+                            <div class="task-bar-pause-weekend h-full border-r border-slate-700/80 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Fin de Semana: ${dayStatus.name} (Descanso)">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-bold bg-slate-950/95 text-slate-300 border border-slate-600/90 shadow-md">
+                                    ${this.columnWidth < 65 ? 'FIN' : '⏸️ Fin Sem'}
+                                </span>
+                                ${this.columnWidth >= 85 ? `<span class="text-[7.5px] font-bold text-slate-400 leading-none mt-0.5 tracking-tight">Descanso</span>` : ''}
+                            </div>
+                        `;
+                    }
+                    if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                        return `
+                            <div class="task-bar-pause-holiday-unpaid h-full border-r border-rose-500/60 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Parada No Laborable">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-bold bg-rose-950/95 text-rose-200 border border-rose-400 shadow-md">
+                                    ${this.columnWidth < 65 ? 'PAR' : '🔴 Parada'}
+                                </span>
+                            </div>
+                        `;
+                    }
+                    return `<div class="h-full border-r border-slate-700/30" style="width: ${this.columnWidth}px;"></div>`;
+                }).join('')}
+            </div>
+        ` : '';
 
         // Desviación en días para Pestaña Comparativa
         let deltaDays = 0;
@@ -771,22 +835,24 @@ export class TimelineRenderer {
                          style="left: ${leftOffset + rowHandleWidth}px; width: ${barWidth}px;"
                          draggable="${!isSupervision}"
                          data-task-id="${task.id}"
-                         title="${task.name} (${task.durationDays}d)">
+                         title="${task.name} (${task.durationDays}d laborables${nonWorkingCount > 0 ? ` • ${calendarSpan}d corridos con ${nonWorkingCount}d de pausa no laborable` : ''})">
 
                         ${currentTab === 'comparativa' ? `
                             <!-- MODO COMPARATIVA: DOBLE BARRA (Línea Base vs Real) -->
                             <div class="h-full flex flex-col justify-between ${barWidth < 55 ? 'p-0.5' : 'p-1'} bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
                                 
+                                ${nonWorkingOverlayHtml}
+
                                 <!-- Barra Superior: Estimado (Línea Base) -->
-                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between ${barWidth < 55 ? 'px-1' : 'px-2'} text-[10px] text-slate-300">
+                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between ${barWidth < 55 ? 'px-1' : 'px-2'} text-[10px] text-slate-300 relative z-20">
                                     <span class="flex items-center gap-1 font-mono font-bold text-slate-400 truncate">
-                                        ${barWidth < 55 ? `${task.durationDays}d` : `<i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d`}
+                                        ${barWidth < 55 ? `${task.durationDays}d` : `<i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d lab (${calendarSpan}d)`}
                                     </span>
                                     ${barWidth >= 55 ? `<span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>` : ''}
                                 </div>
 
                                 <!-- Barra Inferior: Real en Terreno -->
-                                <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80">
+                                <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80 z-20">
                                     <!-- Progreso real llenado -->
                                     <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-gradient-to-r from-red-600 to-rose-500' : (task.progress >= 100 ? 'bg-gradient-to-r from-blue-600 to-cyan-500' : 'bg-gradient-to-r from-emerald-600 to-teal-500')} opacity-90 transition-all"
                                          style="width: ${task.progress || 0}%;"></div>
@@ -817,12 +883,14 @@ export class TimelineRenderer {
                             <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl ${barWidth < 55 ? 'p-1' : 'p-2'} shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-pointer">
                                 
                                 <!-- Relleno de barra de progreso interna -->
-                                <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all"
+                                <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all z-0"
                                      style="width: ${task.progress || 0}%;"></div>
+
+                                ${nonWorkingOverlayHtml}
 
                                 ${barWidth < 55 ? `
                                     <!-- FORMATO COMPACTO PARA ZOOM REDUCIDO / MÓVIL -->
-                                    <div class="relative z-10 flex flex-col justify-center items-center h-full text-center">
+                                    <div class="relative z-20 flex flex-col justify-center items-center h-full text-center pointer-events-none">
                                         <span class="text-[8px] font-mono font-bold leading-tight ${discipline.badgeClass} px-1 rounded truncate max-w-full">
                                             ${task.tag || 'TSK'}
                                         </span>
@@ -832,7 +900,7 @@ export class TimelineRenderer {
                                     </div>
                                 ` : `
                                     <!-- Cabecera de la tarjeta dentro de la barra -->
-                                    <div class="relative z-10 flex items-center justify-between gap-2">
+                                    <div class="relative z-20 flex items-center justify-between gap-2 pointer-events-none">
                                         <div class="flex items-center gap-1.5 truncate">
                                             <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${discipline.badgeClass} border flex-shrink-0">
                                                 ${task.tag || 'TSK'}
@@ -847,7 +915,7 @@ export class TimelineRenderer {
                                     </div>
 
                                     <!-- Footer de la barra con recursos -->
-                                    <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                    <div class="relative z-20 flex items-center justify-between text-[10px] text-slate-400 font-medium pointer-events-none">
                                         <div class="flex items-center gap-1.5">
                                             <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
                                                 <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
@@ -858,9 +926,16 @@ export class TimelineRenderer {
                                                 </span>
                                             ` : ''}
                                         </div>
-                                        <span class="text-[9px] bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/50 font-mono">
-                                            ${task.durationDays}d
-                                        </span>
+                                        <div class="flex items-center gap-1">
+                                            <span class="text-[9px] bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 font-mono flex items-center gap-1" title="${task.durationDays} días laborables ejecutados en ${calendarSpan} días corridos">
+                                                <i data-lucide="clock" class="w-2.5 h-2.5 text-amber-400"></i> ${task.durationDays}d lab (${calendarSpan}d)
+                                            </span>
+                                            ${nonWorkingCount > 0 ? `
+                                                <span class="text-[8px] font-bold px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-0.5" title="${nonWorkingCount} días no laborables (fines de semana / feriados) durante la ejecución de esta tarea">
+                                                    <i data-lucide="pause-circle" class="w-2 h-2"></i> ${nonWorkingCount}d pausa
+                                                </span>
+                                            ` : ''}
+                                        </div>
                                     </div>
                                 `}
 

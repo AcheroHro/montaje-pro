@@ -95,9 +95,9 @@ const INITIAL_PROJECTS = [
                 discipline: 'piping',
                 durationDays: 5,
                 estimatedStart: '2026-09-03',
-                estimatedEnd: '2026-09-07',
+                estimatedEnd: '2026-09-09',
                 realStart: '2026-09-04',
-                realEnd: '2026-09-09',
+                realEnd: '2026-09-10',
                 progress: 85,
                 status: 'in_progress',
                 notes: 'Retraso de 1 día por viento de más de 45 km/h que imposibilitó izajes.',
@@ -113,10 +113,10 @@ const INITIAL_PROJECTS = [
                 name: 'Soldadura TIG Raíz + Arco Juntas a Tope 10" ASTM A106 Gr.B',
                 discipline: 'soldadura',
                 durationDays: 4,
-                estimatedStart: '2026-09-06',
-                estimatedEnd: '2026-09-09',
+                estimatedStart: '2026-09-07',
+                estimatedEnd: '2026-09-10',
                 realStart: '2026-09-07',
-                realEnd: '2026-09-11',
+                realEnd: '2026-09-14',
                 progress: 60,
                 status: 'delayed',
                 notes: 'Se requiere completar 22 juntas. Hay 13 completadas aprobadas visualmente.',
@@ -152,7 +152,7 @@ const INITIAL_PROJECTS = [
                 discipline: 'end',
                 durationDays: 2,
                 estimatedStart: '2026-09-10',
-                estimatedEnd: '2026-09-11',
+                estimatedEnd: '2026-09-14',
                 realStart: null,
                 realEnd: null,
                 progress: 0,
@@ -170,8 +170,8 @@ const INITIAL_PROJECTS = [
                 name: 'Prueba Hidrostática Circuito Gas 10" a 72 bar (ASME B31.3)',
                 discipline: 'pruebas',
                 durationDays: 3,
-                estimatedStart: '2026-09-12',
-                estimatedEnd: '2026-09-14',
+                estimatedStart: '2026-09-15',
+                estimatedEnd: '2026-09-17',
                 realStart: null,
                 realEnd: null,
                 progress: 0,
@@ -413,15 +413,47 @@ function getDatesRange(startDateStr, endDateStr) {
 }
 
 /**
- * Calcula la fecha de fin a partir de una fecha de inicio y una duración en días (mínimo 1 día)
+ * Calcula la fecha de fin a partir de una fecha de inicio y una duración en días (mínimo 1 día).
+ * Si se especifica calendarConfig, contabiliza únicamente días laborables (saltando fines de semana y feriados/paradas).
  */
-function calculateEndDate(startDateStr, durationDays) {
+function calculateEndDate(startDateStr, durationDays, calendarConfig = null) {
     if (!startDateStr) return null;
     const dur = Math.max(1, parseInt(durationDays) || 1);
     const [sYear, sMonth, sDay] = startDateStr.split('-').map(Number);
-    const start = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
-    start.setDate(start.getDate() + (dur - 1));
-    return formatDateLocal(start);
+    const curr = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
+
+    if (!calendarConfig) {
+        curr.setDate(curr.getDate() + (dur - 1));
+        return formatDateLocal(curr);
+    }
+
+    const workWeek = calendarConfig.workWeek || [1, 2, 3, 4, 5];
+    const holidays = calendarConfig.holidays || {};
+
+    let workDaysCount = 0;
+    let safetyCounter = 0;
+    const maxDays = Math.max(1000, dur * 10);
+
+    while (safetyCounter < maxDays) {
+        safetyCounter++;
+        const dStr = formatDateLocal(curr);
+        let isWorking = true;
+
+        if (holidays[dStr]) {
+            isWorking = Boolean(holidays[dStr].isWorking);
+        } else {
+            isWorking = workWeek.includes(curr.getDay());
+        }
+
+        if (isWorking) {
+            workDaysCount++;
+            if (workDaysCount >= dur) {
+                return dStr;
+            }
+        }
+        curr.setDate(curr.getDate() + 1);
+    }
+    return formatDateLocal(curr);
 }
 
 /**
@@ -448,7 +480,7 @@ function getResourceMeta(resourceId, customCatalog = null) {
  * @param {Object} customCatalog - Catálogo dinámico opcional
  * @returns {Object} { conflictsByDate, taskConflicts, dailyLoad, totalConflictsCount }
  */
-function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null) {
+function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated', customCatalog = null, calendarConfig = null) {
     const dailyLoad = {}; // date -> { resourceId: { total: number, tasks: [taskId] } }
     const conflictsByDate = {}; // date -> [ { resourceId, name, unit, required, limit, excess, taskIds } ]
     const taskConflicts = {}; // taskId -> [ { date, resourceId, resourceName, required, limit, conflictingWithTaskIds } ]
@@ -483,6 +515,19 @@ function analyzeResourceConflicts(tasks, resourceLimits = {}, mode = 'estimated'
 
         // Por cada día de la tarea, computar consumo diario (asumiendo jornada de 8h o prorrateo)
         dates.forEach(date => {
+            if (calendarConfig) {
+                const workWeek = calendarConfig.workWeek || [1, 2, 3, 4, 5];
+                const holidays = calendarConfig.holidays || {};
+                let isWorking = true;
+                if (holidays[date]) {
+                    isWorking = Boolean(holidays[date].isWorking);
+                } else {
+                    const [y, m, d] = date.split('-').map(Number);
+                    isWorking = workWeek.includes(new Date(y, m - 1, d, 12, 0, 0).getDay());
+                }
+                if (!isWorking) return; // No hay actividad productiva en días no laborables
+            }
+
             if (!dailyLoad[date]) dailyLoad[date] = {};
 
             // Mano de obra (HH distribuidas en días -> dotación estimada = HH / (dur * 8h))
@@ -1064,7 +1109,15 @@ class ProjectStore {
     getConflicts() {
         const project = this.getActiveProject();
         if (!project) return { conflictsByDate: {}, taskConflicts: {}, dailyLoad: {}, totalConflictsCount: 0 };
-        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
+        return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs(), project.calendarConfig);
+    }
+
+    /**
+     * Calcula la fecha de fin de una tarea considerando días laborables del calendario de obra
+     */
+    calculateTaskEndDate(startDateStr, durationDays, project = this.getActiveProject()) {
+        const calConfig = project ? project.calendarConfig : null;
+        return calculateEndDate(startDateStr, durationDays, calConfig);
     }
 
     /**
@@ -1226,6 +1279,17 @@ class ProjectStore {
                 isPaid: false
             };
         }
+
+        // Recalcular dinámicamente fechas fin de las tareas según el nuevo calendario laboral
+        (project.tasks || []).forEach(t => {
+            const dur = Math.max(1, t.durationDays || 1);
+            if (t.estimatedStart) {
+                t.estimatedEnd = this.calculateTaskEndDate(t.estimatedStart, dur, project);
+            }
+            if (t.realStart) {
+                t.realEnd = this.calculateTaskEndDate(t.realStart, dur, project);
+            }
+        });
 
         this.notify();
         return true;
@@ -1643,7 +1707,7 @@ class ProjectStore {
         if (!task) return;
 
         const dur = Math.max(1, task.durationDays || 1);
-        const newEndDate = calculateEndDate(targetDate, dur);
+        const newEndDate = this.calculateTaskEndDate(targetDate, dur, project);
 
         if (currentTab === 'real') {
             task.realStart = targetDate;
@@ -1737,12 +1801,12 @@ class ProjectStore {
         // Recalcular fin si cambió duración o inicio
         if (updatedFields.durationDays || updatedFields.estimatedStart) {
             if (task.estimatedStart) {
-                task.estimatedEnd = calculateEndDate(task.estimatedStart, task.durationDays);
+                task.estimatedEnd = this.calculateTaskEndDate(task.estimatedStart, task.durationDays, project);
             }
         }
         if (updatedFields.realStart || (updatedFields.durationDays && task.realStart && !updatedFields.realEnd)) {
             if (task.realStart && !updatedFields.realEnd) {
-                task.realEnd = calculateEndDate(task.realStart, task.durationDays);
+                task.realEnd = this.calculateTaskEndDate(task.realStart, task.durationDays, project);
             }
         }
 
@@ -1995,7 +2059,7 @@ class ProjectStore {
             discipline: taskData.discipline || 'piping',
             durationDays: parseInt(taskData.durationDays) || 3,
             estimatedStart: addToBacklog ? null : (taskData.estimatedStart || '2026-09-01'),
-            estimatedEnd: addToBacklog ? null : calculateEndDate(taskData.estimatedStart || '2026-09-01', taskData.durationDays || 3),
+            estimatedEnd: addToBacklog ? null : this.calculateTaskEndDate(taskData.estimatedStart || '2026-09-01', taskData.durationDays || 3, project),
             realStart: null,
             realEnd: null,
             progress: 0,
@@ -2852,11 +2916,75 @@ class TimelineRenderer {
 
         const dur = Math.max(1, task.durationDays || 1);
         const startIndex = calendarDates.indexOf(startDayStr);
+        const endIndex = endDayStr ? calendarDates.indexOf(endDayStr) : -1;
 
         // Si la tarea no tiene fecha en este rango
         const isPlaced = startIndex !== -1;
         const leftOffset = isPlaced ? (startIndex * this.columnWidth) : 0;
-        const barWidth = Math.max(this.columnWidth * 0.9, dur * this.columnWidth);
+
+        // Ancho de barra y span de días calendario (días corridos reales que abarca la tarea)
+        const calendarSpan = (isPlaced && endIndex !== -1 && endIndex >= startIndex) 
+            ? (endIndex - startIndex + 1) 
+            : dur;
+        const barWidth = Math.max(this.columnWidth * 0.9, calendarSpan * this.columnWidth);
+
+        // Desglose de fechas que abarca la tarea en el calendario
+        const taskDates = [];
+        if (isPlaced) {
+            for (let i = 0; i < calendarSpan; i++) {
+                const idx = startIndex + i;
+                if (idx < calendarDates.length) {
+                    taskDates.push(calendarDates[idx]);
+                }
+            }
+        }
+        const nonWorkingDaysInTask = taskDates.filter(d => !this.store.getDayStatus(d).isWorking);
+        const nonWorkingCount = nonWorkingDaysInTask.length;
+
+        // Capa visual de pausas por días no laborables superpuesta de forma nítida en la barra
+        const nonWorkingOverlayHtml = isPlaced ? `
+            <div class="absolute inset-0 flex pointer-events-none z-10">
+                ${taskDates.map(d => {
+                    const dayStatus = this.store.getDayStatus(d);
+                    if (dayStatus.isHoliday && dayStatus.isPaid) {
+                        return `
+                            <div class="task-bar-pause-holiday-paid h-full border-r border-purple-500/60 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Feriado Pago: ${dayStatus.name} (Pausa de Tarea en Terreno)">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-black bg-purple-950/95 text-purple-200 border border-purple-400 shadow-md">
+                                    ${this.columnWidth < 65 ? 'FER' : '🟣 Feriado $'}
+                                </span>
+                                ${this.columnWidth >= 85 ? `<span class="text-[7.5px] font-extrabold text-purple-300 leading-none mt-0.5 tracking-tight">Pausa</span>` : ''}
+                            </div>
+                        `;
+                    }
+                    if (dayStatus.isWeekend) {
+                        return `
+                            <div class="task-bar-pause-weekend h-full border-r border-slate-700/80 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Fin de Semana: ${dayStatus.name} (Descanso)">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-bold bg-slate-950/95 text-slate-300 border border-slate-600/90 shadow-md">
+                                    ${this.columnWidth < 65 ? 'FIN' : '⏸️ Fin Sem'}
+                                </span>
+                                ${this.columnWidth >= 85 ? `<span class="text-[7.5px] font-bold text-slate-400 leading-none mt-0.5 tracking-tight">Descanso</span>` : ''}
+                            </div>
+                        `;
+                    }
+                    if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                        return `
+                            <div class="task-bar-pause-holiday-unpaid h-full border-r border-rose-500/60 flex flex-col items-center justify-center p-0.5 overflow-hidden select-none"
+                                 style="width: ${this.columnWidth}px;"
+                                 title="Parada No Laborable">
+                                <span class="px-1 py-0.2 rounded text-[7.5px] font-bold bg-rose-950/95 text-rose-200 border border-rose-400 shadow-md">
+                                    ${this.columnWidth < 65 ? 'PAR' : '🔴 Parada'}
+                                </span>
+                            </div>
+                        `;
+                    }
+                    return `<div class="h-full border-r border-slate-700/30" style="width: ${this.columnWidth}px;"></div>`;
+                }).join('')}
+            </div>
+        ` : '';
 
         // Desviación en días para Pestaña Comparativa
         let deltaDays = 0;
@@ -2930,22 +3058,24 @@ class TimelineRenderer {
                          style="left: ${leftOffset + rowHandleWidth}px; width: ${barWidth}px;"
                          draggable="${!isSupervision}"
                          data-task-id="${task.id}"
-                         title="${task.name} (${task.durationDays}d)">
+                         title="${task.name} (${task.durationDays}d laborables${nonWorkingCount > 0 ? ` • ${calendarSpan}d corridos con ${nonWorkingCount}d de pausa no laborable` : ''})">
 
                         ${currentTab === 'comparativa' ? `
                             <!-- MODO COMPARATIVA: DOBLE BARRA (Línea Base vs Real) -->
                             <div class="h-full flex flex-col justify-between ${barWidth < 55 ? 'p-0.5' : 'p-1'} bg-slate-900/90 border-2 ${hasConflict ? 'border-red-500 shadow-red-500/20' : 'border-slate-700'} rounded-xl shadow-lg relative overflow-hidden">
                                 
+                                ${nonWorkingOverlayHtml}
+
                                 <!-- Barra Superior: Estimado (Línea Base) -->
-                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between ${barWidth < 55 ? 'px-1' : 'px-2'} text-[10px] text-slate-300">
+                                <div class="h-[42%] bg-slate-700/60 rounded border border-dashed border-slate-500/50 flex items-center justify-between ${barWidth < 55 ? 'px-1' : 'px-2'} text-[10px] text-slate-300 relative z-20">
                                     <span class="flex items-center gap-1 font-mono font-bold text-slate-400 truncate">
-                                        ${barWidth < 55 ? `${task.durationDays}d` : `<i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d`}
+                                        ${barWidth < 55 ? `${task.durationDays}d` : `<i data-lucide="flag" class="w-2.5 h-2.5 text-blue-400"></i> Plan: ${task.durationDays}d lab (${calendarSpan}d)`}
                                     </span>
                                     ${barWidth >= 55 ? `<span class="font-mono text-[9px] text-slate-400">${estHH} HH</span>` : ''}
                                 </div>
 
                                 <!-- Barra Inferior: Real en Terreno -->
-                                <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80">
+                                <div class="h-[52%] relative bg-slate-800 rounded flex items-center overflow-hidden border border-slate-600/80 z-20">
                                     <!-- Progreso real llenado -->
                                     <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-gradient-to-r from-red-600 to-rose-500' : (task.progress >= 100 ? 'bg-gradient-to-r from-blue-600 to-cyan-500' : 'bg-gradient-to-r from-emerald-600 to-teal-500')} opacity-90 transition-all"
                                          style="width: ${task.progress || 0}%;"></div>
@@ -2976,12 +3106,14 @@ class TimelineRenderer {
                             <div class="h-full bg-slate-800/95 hover:bg-slate-800 border-2 ${hasConflict ? 'border-red-500 ring-2 ring-red-500/20' : (task.progress >= 100 ? 'border-blue-500/80' : 'border-slate-700/80')} rounded-xl ${barWidth < 55 ? 'p-1' : 'p-2'} shadow-lg flex flex-col justify-between relative overflow-hidden group/bar cursor-pointer">
                                 
                                 <!-- Relleno de barra de progreso interna -->
-                                <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all"
+                                <div class="absolute inset-y-0 left-0 ${hasConflict ? 'bg-red-500/20' : (task.progress >= 100 ? 'bg-blue-500/20' : 'bg-emerald-500/20')} pointer-events-none transition-all z-0"
                                      style="width: ${task.progress || 0}%;"></div>
+
+                                ${nonWorkingOverlayHtml}
 
                                 ${barWidth < 55 ? `
                                     <!-- FORMATO COMPACTO PARA ZOOM REDUCIDO / MÓVIL -->
-                                    <div class="relative z-10 flex flex-col justify-center items-center h-full text-center">
+                                    <div class="relative z-20 flex flex-col justify-center items-center h-full text-center pointer-events-none">
                                         <span class="text-[8px] font-mono font-bold leading-tight ${discipline.badgeClass} px-1 rounded truncate max-w-full">
                                             ${task.tag || 'TSK'}
                                         </span>
@@ -2991,7 +3123,7 @@ class TimelineRenderer {
                                     </div>
                                 ` : `
                                     <!-- Cabecera de la tarjeta dentro de la barra -->
-                                    <div class="relative z-10 flex items-center justify-between gap-2">
+                                    <div class="relative z-20 flex items-center justify-between gap-2 pointer-events-none">
                                         <div class="flex items-center gap-1.5 truncate">
                                             <span class="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${discipline.badgeClass} border flex-shrink-0">
                                                 ${task.tag || 'TSK'}
@@ -3006,7 +3138,7 @@ class TimelineRenderer {
                                     </div>
 
                                     <!-- Footer de la barra con recursos -->
-                                    <div class="relative z-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                    <div class="relative z-20 flex items-center justify-between text-[10px] text-slate-400 font-medium pointer-events-none">
                                         <div class="flex items-center gap-1.5">
                                             <span class="flex items-center gap-0.5 text-cyan-300 font-mono">
                                                 <i data-lucide="users" class="w-3 h-3"></i> ${realHH} HH
@@ -3017,9 +3149,16 @@ class TimelineRenderer {
                                                 </span>
                                             ` : ''}
                                         </div>
-                                        <span class="text-[9px] bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/50 font-mono">
-                                            ${task.durationDays}d
-                                        </span>
+                                        <div class="flex items-center gap-1">
+                                            <span class="text-[9px] bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 font-mono flex items-center gap-1" title="${task.durationDays} días laborables ejecutados en ${calendarSpan} días corridos">
+                                                <i data-lucide="clock" class="w-2.5 h-2.5 text-amber-400"></i> ${task.durationDays}d lab (${calendarSpan}d)
+                                            </span>
+                                            ${nonWorkingCount > 0 ? `
+                                                <span class="text-[8px] font-bold px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-0.5" title="${nonWorkingCount} días no laborables (fines de semana / feriados) durante la ejecución de esta tarea">
+                                                    <i data-lucide="pause-circle" class="w-2 h-2"></i> ${nonWorkingCount}d pausa
+                                                </span>
+                                            ` : ''}
+                                        </div>
                                     </div>
                                 `}
 
@@ -6781,9 +6920,9 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             const startDayStr = (reportType === 'real') 
                 ? (task.realStart || task.estimatedStart) 
                 : task.estimatedStart;
-            const dur = Math.max(1, task.durationDays || 1);
-            const startIndex = calendarDates.indexOf(startDayStr);
-            const isPlaced = startIndex !== -1;
+            const endDayStr = (reportType === 'real')
+                ? (task.realEnd || task.estimatedEnd)
+                : task.estimatedEnd;
 
             let deltaDays = 0;
             if (task.estimatedEnd && task.realEnd) {
@@ -6792,12 +6931,55 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                 deltaDays = Math.round((realTime - estTime) / (1000 * 60 * 60 * 24));
             }
 
+            const dur = Math.max(1, task.durationDays || 1);
+            const startIndex = calendarDates.indexOf(startDayStr);
+            const endIndex = endDayStr ? calendarDates.indexOf(endDayStr) : -1;
+            const isPlaced = startIndex !== -1;
+
+            const calendarSpan = (isPlaced && endIndex !== -1 && endIndex >= startIndex)
+                ? (endIndex - startIndex + 1)
+                : dur;
+
             let leftPct = 0;
             let widthPct = 0;
             if (isPlaced) {
                 leftPct = (startIndex / totalDays) * 100;
-                widthPct = Math.min(100 - leftPct, (dur / totalDays) * 100);
+                widthPct = Math.min(100 - leftPct, (calendarSpan / totalDays) * 100);
             }
+
+            const taskDates = [];
+            if (isPlaced) {
+                for (let i = 0; i < calendarSpan; i++) {
+                    const idx = startIndex + i;
+                    if (idx < calendarDates.length) taskDates.push(calendarDates[idx]);
+                }
+            }
+            const printNonWorkingOverlay = isPlaced ? `
+                <div class="absolute inset-0 flex pointer-events-none z-10">
+                    ${taskDates.map(d => {
+                        const dayStatus = this.store.getDayStatus(d, p);
+                        if (dayStatus.isHoliday && dayStatus.isPaid) {
+                            return `
+                                <div class="task-bar-pause-holiday-paid h-full flex flex-col items-center justify-center text-[7px] font-black text-purple-900 border-r border-purple-400"
+                                     style="width: ${(1 / calendarSpan) * 100}%;"
+                                     title="Feriado Pago: ${dayStatus.name}">
+                                    <span>FER</span>
+                                </div>
+                            `;
+                        }
+                        if (dayStatus.isWeekend) {
+                            return `
+                                <div class="task-bar-pause-weekend h-full flex flex-col items-center justify-center text-[7px] font-bold text-slate-600 border-r border-slate-300"
+                                     style="width: ${(1 / calendarSpan) * 100}%;"
+                                     title="Fin de Semana">
+                                    <span>FIN</span>
+                                </div>
+                            `;
+                        }
+                        return `<div class="h-full border-r border-transparent" style="width: ${(1 / calendarSpan) * 100}%;"></div>`;
+                    }).join('')}
+                </div>
+            ` : '';
 
             return `
                 <div class="print-gantt-row flex items-stretch border-b border-slate-200 text-xs min-h-[38px] hover:bg-slate-50">
@@ -6814,7 +6996,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         </div>
                         <div class="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 font-mono">
                             <span class="uppercase font-bold" style="color: ${discStyle.borderHex} !important;">${discStyle.name.split(' ')[0]}</span>
-                            <span>• ${task.durationDays}d</span>
+                            <span>• ${task.durationDays}d lab (${calendarSpan}d)</span>
                             ${reportType !== 'estimated' ? `<span class="font-bold ${task.progress >= 100 ? 'text-blue-600' : 'text-emerald-700'}">${task.progress || 0}%</span>` : ''}
                         </div>
                     </div>
@@ -6845,32 +7027,35 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                 
                                 ${reportType === 'estimated' ? `
                                     <!-- MODO ESTIMADO: BARRA PLANIFICADA CON COLOR DE DISCIPLINA EXACTO -->
-                                    <div class="h-full rounded ${discStyle.bgClass} ${discStyle.textClass} border ${discStyle.borderClass} shadow-sm flex items-center justify-between px-2 text-[10px] overflow-hidden"
+                                    <div class="h-full rounded ${discStyle.bgClass} ${discStyle.textClass} border ${discStyle.borderClass} shadow-sm flex items-center justify-between px-2 text-[10px] overflow-hidden relative"
                                          style="background-color: ${discStyle.hex} !important; border-color: ${discStyle.borderHex} !important; color: ${discStyle.textHex} !important;">
-                                        <span class="truncate">${task.tag ? `${task.tag} ` : ''}${task.name}</span>
-                                        <span class="font-mono text-[9px] shrink-0 pl-1 font-black">${task.durationDays}d</span>
+                                        ${printNonWorkingOverlay}
+                                        <span class="truncate relative z-20">${task.tag ? `${task.tag} ` : ''}${task.name}</span>
+                                        <span class="font-mono text-[9px] shrink-0 pl-1 font-black relative z-20">${task.durationDays}d</span>
                                     </div>
                                 ` : (reportType === 'real' ? `
                                     <!-- MODO REAL O EN EJECUCIÓN: BARRA CON AVANCE REAL -->
                                     <div class="h-full rounded bg-slate-200 border border-slate-400 overflow-hidden shadow-sm relative flex items-center">
                                         <div class="h-full ${task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600'} transition-all"
                                              style="width: ${task.progress || 0}%;"></div>
-                                        <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">
+                                        ${printNonWorkingOverlay}
+                                        <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'} relative z-20">
                                             <span class="truncate">${task.tag || ''} ${task.name}</span>
                                             <span class="font-mono shrink-0 pl-1 font-black">${task.progress || 0}%</span>
                                         </div>
                                     </div>
                                 ` : `
                                     <!-- MODO COMPARATIVA / CONTROL: DOBLE BARRA (PLAN VS REAL) -->
-                                    <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm">
+                                    <div class="h-full rounded border border-slate-400 bg-slate-100 p-0.5 flex flex-col justify-between overflow-hidden shadow-sm relative">
+                                        ${printNonWorkingOverlay}
                                         <!-- Barra Superior: Plan con color de disciplina -->
-                                        <div class="h-[46%] rounded ${discStyle.bgClass} text-white flex items-center justify-between px-1.5 text-[8px] font-mono shadow-xs"
+                                        <div class="h-[46%] rounded ${discStyle.bgClass} text-white flex items-center justify-between px-1.5 text-[8px] font-mono shadow-xs relative z-20"
                                              style="background-color: ${discStyle.hex} !important; color: ${discStyle.textHex} !important;">
                                             <span class="truncate font-semibold">Plan: ${task.durationDays}d</span>
                                             <span class="shrink-0 font-bold">${task.tag || ''}</span>
                                         </div>
                                         <!-- Barra Inferior: Real con Desvío -->
-                                        <div class="h-[48%] relative rounded bg-slate-300 overflow-hidden border border-slate-400">
+                                        <div class="h-[48%] relative rounded bg-slate-300 overflow-hidden border border-slate-400 z-20">
                                             <div class="h-full ${deltaDays > 0 ? 'bg-rose-600' : (task.progress >= 100 ? 'bg-blue-600' : 'bg-emerald-600')}"
                                                  style="width: ${task.progress || 0}%;"></div>
                                             <div class="absolute inset-0 flex items-center justify-between px-1.5 text-[8px] font-bold ${task.progress > 45 ? 'text-white' : 'text-slate-900'}">
