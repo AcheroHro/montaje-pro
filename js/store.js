@@ -826,6 +826,101 @@ class ProjectStore {
         this.notify();
     }
 
+    // Asegurar baseline de recursos para cálculo determinista de partes diarios
+    ensureTaskBaseResources(task) {
+        if (!task) return;
+        if (!task.dailyLogs) task.dailyLogs = [];
+        if (!task.realLabor) task.realLabor = {};
+        if (!task.realMachinery) task.realMachinery = {};
+
+        // Asegurar que cada parte diario tenga un ID único
+        task.dailyLogs.forEach((l, idx) => {
+            if (!l.id) l.id = 'LOG-' + (idx + 1) + '-' + (l.date || 'rec');
+        });
+
+        if (task._baseRealLabor !== undefined && task._baseRealMachinery !== undefined) {
+            return;
+        }
+
+        // Sumar lo que ya tienen asentado los partes diarios existentes
+        const loggedLabor = {};
+        const loggedMach = {};
+        task.dailyLogs.forEach(log => {
+            if (log.labor) {
+                Object.entries(log.labor).forEach(([rId, hrs]) => {
+                    loggedLabor[rId] = (loggedLabor[rId] || 0) + (parseFloat(hrs) || 0);
+                });
+            }
+            if (log.machinery) {
+                Object.entries(log.machinery).forEach(([mId, hrs]) => {
+                    loggedMach[mId] = (loggedMach[mId] || 0) + (parseFloat(hrs) || 0);
+                });
+            }
+        });
+
+        // La base es el realLabor actual menos lo que fue sumado por partes diarios
+        task._baseRealLabor = {};
+        Object.entries(task.realLabor || {}).forEach(([rId, val]) => {
+            task._baseRealLabor[rId] = Math.max(0, (parseFloat(val) || 0) - (loggedLabor[rId] || 0));
+        });
+
+        task._baseRealMachinery = {};
+        Object.entries(task.realMachinery || {}).forEach(([mId, val]) => {
+            task._baseRealMachinery[mId] = Math.max(0, (parseFloat(val) || 0) - (loggedMach[mId] || 0));
+        });
+    }
+
+    // Recalcular recursos y avance de la tarea en base a sus partes diarios
+    recalculateTaskResources(task) {
+        if (!task) return;
+        this.ensureTaskBaseResources(task);
+
+        const newLabor = { ...(task._baseRealLabor || {}) };
+        const newMach = { ...(task._baseRealMachinery || {}) };
+
+        // Acumular todos los partes diarios vigentes
+        (task.dailyLogs || []).forEach(log => {
+            if (log.labor) {
+                Object.entries(log.labor).forEach(([rId, hrs]) => {
+                    const h = parseFloat(hrs) || 0;
+                    if (h > 0) newLabor[rId] = (newLabor[rId] || 0) + h;
+                });
+            }
+            if (log.machinery) {
+                Object.entries(log.machinery).forEach(([mId, hrs]) => {
+                    const h = parseFloat(hrs) || 0;
+                    if (h > 0) newMach[mId] = (newMach[mId] || 0) + h;
+                });
+            }
+        });
+
+        task.realLabor = newLabor;
+        task.realMachinery = newMach;
+
+        // Si hay partes diarios, el avance lo determina el parte más reciente
+        if (task.dailyLogs && task.dailyLogs.length > 0) {
+            task.progress = task.dailyLogs[0].progress !== undefined ? task.dailyLogs[0].progress : (task.progress || 0);
+            if (task.progress >= 100) {
+                task.status = 'completed';
+                if (!task.realEnd) task.realEnd = task.dailyLogs[0].date;
+            } else if (task.progress > 0) {
+                task.status = 'in_progress';
+                if (!task.realStart) task.realStart = task.estimatedStart || task.dailyLogs[0].date;
+            } else {
+                task.status = 'pending';
+            }
+        } else {
+            // Si no quedan partes diarios
+            if (task.progress >= 100) {
+                task.status = 'completed';
+            } else if (task.progress > 0) {
+                task.status = 'in_progress';
+            } else {
+                task.status = 'pending';
+            }
+        }
+    }
+
     // Registrar Parte Diario estructurado con historial de auditoría
     addDailyLog(taskId, logData) {
         if (this.state.isSupervisionMode) return null;
@@ -836,9 +931,7 @@ class ProjectStore {
         if (!task && project.backlog) task = project.backlog.find(t => t.id === taskId);
         if (!task) return null;
 
-        if (!task.dailyLogs) task.dailyLogs = [];
-        if (!task.realLabor) task.realLabor = {};
-        if (!task.realMachinery) task.realMachinery = {};
+        this.ensureTaskBaseResources(task);
 
         const logId = 'LOG-' + Date.now().toString(36) + '-' + Math.floor(10 + Math.random() * 90);
         const date = logData.date || this.getProjectCutoffDate(project);
@@ -852,7 +945,6 @@ class ProjectStore {
                 const h = parseFloat(hrs) || 0;
                 if (h > 0) {
                     laborLogged[rId] = h;
-                    task.realLabor[rId] = (task.realLabor[rId] || 0) + h;
                 }
             });
         }
@@ -864,7 +956,6 @@ class ProjectStore {
                 const h = parseFloat(hrs) || 0;
                 if (h > 0) {
                     machLogged[mId] = h;
-                    task.realMachinery[mId] = (task.realMachinery[mId] || 0) + h;
                 }
             });
         }
@@ -880,15 +971,7 @@ class ProjectStore {
         };
 
         task.dailyLogs.unshift(newLog); // Más reciente arriba
-        task.progress = progress;
-
-        if (progress >= 100) {
-            task.status = 'completed';
-            if (!task.realEnd) task.realEnd = date;
-        } else if (progress > 0) {
-            task.status = 'in_progress';
-            if (!task.realStart) task.realStart = task.estimatedStart || date;
-        }
+        this.recalculateTaskResources(task);
 
         if (notes) {
             const noteHeader = `[${date} Parte Diario]: ${notes}`;
@@ -897,6 +980,75 @@ class ProjectStore {
 
         this.notify();
         return newLog;
+    }
+
+    // Editar un Parte Diario existente (para corregir horas, avance, fecha o notas mal cargadas)
+    updateDailyLog(taskId, logId, updatedData) {
+        if (this.state.isSupervisionMode) return null;
+        const project = this.getActiveProject();
+        if (!project) return null;
+
+        let task = project.tasks.find(t => t.id === taskId);
+        if (!task && project.backlog) task = project.backlog.find(t => t.id === taskId);
+        if (!task || !task.dailyLogs) return null;
+
+        const log = task.dailyLogs.find(l => l.id === logId);
+        if (!log) return null;
+
+        this.ensureTaskBaseResources(task);
+
+        if (updatedData.date) log.date = updatedData.date;
+        if (updatedData.progress !== undefined) {
+            log.progress = Math.min(100, Math.max(0, parseInt(updatedData.progress)));
+        }
+        if (updatedData.notes !== undefined) {
+            log.notes = (updatedData.notes || '').trim();
+        }
+
+        if (updatedData.labor) {
+            const cleanLabor = {};
+            Object.entries(updatedData.labor).forEach(([rId, hrs]) => {
+                const h = parseFloat(hrs) || 0;
+                if (h > 0) cleanLabor[rId] = h;
+            });
+            log.labor = cleanLabor;
+        }
+
+        if (updatedData.machinery) {
+            const cleanMach = {};
+            Object.entries(updatedData.machinery).forEach(([mId, hrs]) => {
+                const h = parseFloat(hrs) || 0;
+                if (h > 0) cleanMach[mId] = h;
+            });
+            log.machinery = cleanMach;
+        }
+
+        log.updatedAt = new Date().toISOString();
+
+        this.recalculateTaskResources(task);
+        this.notify();
+        return log;
+    }
+
+    // Eliminar un Parte Diario erróneo (descuenta horas acumuladas y recalcula avance)
+    deleteDailyLog(taskId, logId) {
+        if (this.state.isSupervisionMode) return false;
+        const project = this.getActiveProject();
+        if (!project) return false;
+
+        let task = project.tasks.find(t => t.id === taskId);
+        if (!task && project.backlog) task = project.backlog.find(t => t.id === taskId);
+        if (!task || !task.dailyLogs) return false;
+
+        const idx = task.dailyLogs.findIndex(l => l.id === logId);
+        if (idx === -1) return false;
+
+        this.ensureTaskBaseResources(task);
+        task.dailyLogs.splice(idx, 1);
+
+        this.recalculateTaskResources(task);
+        this.notify();
+        return true;
     }
 
     // Crear nueva tarea manual

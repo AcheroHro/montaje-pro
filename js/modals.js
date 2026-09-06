@@ -737,22 +737,36 @@ export class ModalManager {
                         </div>
 
                         <!-- Historial de Partes Anteriores -->
+                        <!-- Historial de Partes Anteriores con Edición y Eliminación -->
                         ${(task.dailyLogs && task.dailyLogs.length > 0) ? `
                             <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80">
-                                <h5 class="font-bold text-slate-300 mb-2 flex items-center gap-1.5 text-xs text-emerald-400">
-                                    <i data-lucide="history" class="w-3.5 h-3.5"></i> Historial de Partes Asentados (${task.dailyLogs.length})
-                                </h5>
-                                <div class="space-y-1.5 max-h-32 overflow-y-auto custom-scrollbar pr-1">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h5 class="font-bold text-slate-300 flex items-center gap-1.5 text-xs text-emerald-400">
+                                        <i data-lucide="history" class="w-3.5 h-3.5"></i> Historial de Partes Asentados (${task.dailyLogs.length})
+                                    </h5>
+                                    <span class="text-[10px] text-slate-400">Corrección de horas o partes erróneos</span>
+                                </div>
+                                <div class="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
                                     ${task.dailyLogs.map(l => `
-                                        <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px]">
-                                            <div class="flex items-center justify-between font-mono text-[10px] text-slate-400 mb-0.5">
-                                                <span class="text-emerald-300 font-bold">${l.date}</span>
-                                                <span>Avance: <strong class="text-white">${l.progress}%</strong></span>
+                                        <div class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-700/70 hover:border-slate-600 text-[11px] transition-all" data-log-id="${l.id}">
+                                            <div class="flex items-center justify-between font-mono text-[10px] text-slate-400 mb-1">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-emerald-300 font-bold bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/60">${l.date}</span>
+                                                    <span>Avance: <strong class="text-white">${l.progress}%</strong></span>
+                                                </div>
+                                                <div class="flex items-center gap-1">
+                                                    <button type="button" class="btn-edit-daily-log px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700 text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer" data-task-id="${task.id}" data-log-id="${l.id}" title="Editar horas o datos de este parte">
+                                                        <i data-lucide="edit-2" class="w-3 h-3"></i> Editar
+                                                    </button>
+                                                    <button type="button" class="btn-delete-daily-log px-2 py-0.5 rounded bg-slate-800 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-800/60 text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer" data-task-id="${task.id}" data-log-id="${l.id}" title="Eliminar este parte">
+                                                        <i data-lucide="trash-2" class="w-3 h-3"></i> Eliminar
+                                                    </button>
+                                                </div>
                                             </div>
-                                            ${l.notes ? `<p class="text-slate-300 text-[11px] italic mb-1">"${l.notes}"</p>` : ''}
+                                            ${l.notes ? `<p class="text-slate-300 text-[11px] italic mb-1.5 bg-slate-950/40 p-1.5 rounded-lg border border-slate-800/60">"${l.notes}"</p>` : ''}
                                             <div class="flex flex-wrap gap-1 text-[9px] font-mono">
-                                                ${Object.entries(l.labor || {}).map(([rId, h]) => `<span class="bg-cyan-950/90 px-1.5 py-0.5 rounded border border-cyan-800 text-cyan-300">${rId}: +${h}h</span>`).join(' ')}
-                                                ${Object.entries(l.machinery || {}).map(([mId, h]) => `<span class="bg-orange-950/90 px-1.5 py-0.5 rounded border border-orange-800 text-orange-300">${mId}: +${h}hs</span>`).join(' ')}
+                                                ${Object.entries(l.labor || {}).map(([rId, h]) => `<span class="bg-cyan-950/90 px-1.5 py-0.5 rounded border border-cyan-800 text-cyan-300 font-bold">${rId}: +${h}h</span>`).join(' ')}
+                                                ${Object.entries(l.machinery || {}).map(([mId, h]) => `<span class="bg-orange-950/90 px-1.5 py-0.5 rounded border border-orange-800 text-orange-300 font-bold">${mId}: +${h}hs</span>`).join(' ')}
                                             </div>
                                         </div>
                                     `).join('')}
@@ -851,6 +865,33 @@ export class ModalManager {
             });
         }
 
+        // Listeners para editar o eliminar partes diarios asentados
+        this.modalRoot.querySelectorAll('.btn-edit-daily-log').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const lid = btn.dataset.logId;
+                this.openEditDailyLogModal(tid, lid);
+            });
+        });
+
+        this.modalRoot.querySelectorAll('.btn-delete-daily-log').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const lid = btn.dataset.logId;
+                const targetLog = task.dailyLogs?.find(l => l.id === lid);
+                const dateStr = targetLog ? targetLog.date : '';
+                if (confirm(`¿Eliminar el parte diario del ${dateStr}? Se descontarán las horas asentadas en esa jornada y se recalculará el avance de la tarea.`)) {
+                    const ok = this.store.deleteDailyLog(tid, lid);
+                    if (ok) {
+                        this.showToast('Parte diario eliminado correctamente.');
+                        this.openDailyLog(tid);
+                    }
+                }
+            });
+        });
+
         this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
 
         const submitBtn = document.getElementById('btn-submit-daily');
@@ -891,6 +932,235 @@ export class ModalManager {
 
                 this.showToast(`Parte diario asentado para el ${logDate}: Avance al ${currentProgress}%`);
                 this.closeModal();
+            });
+        }
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    /**
+     * Modal para editar un Parte Diario ya asentado (corregir horas mal cargadas, avance o fecha)
+     */
+    openEditDailyLogModal(taskId, logId) {
+        const project = this.store.getActiveProject();
+        if (!project) return;
+        let task = project.tasks.find(t => t.id === taskId);
+        if (!task && project.backlog) task = project.backlog.find(t => t.id === taskId);
+        if (!task || !task.dailyLogs) return;
+
+        const log = task.dailyLogs.find(l => l.id === logId);
+        if (!log) return;
+
+        const laborCatalog = this.store.getCatalogItems('labor');
+        const machineryCatalog = this.store.getCatalogItems('machinery');
+
+        // Recursos de mano de obra para editar
+        const laborKeys = Array.from(new Set([
+            ...Object.keys(log.labor || {}),
+            ...Object.keys(task.labor || {})
+        ]));
+        const laborToShow = laborKeys.map(k => {
+            return laborCatalog.find(r => r.id === k) || { id: k, name: k, unit: 'HH' };
+        });
+
+        // Maquinarias para editar
+        const machKeys = Array.from(new Set([
+            ...Object.keys(log.machinery || {}),
+            ...Object.keys(task.machinery || {}),
+            ...Object.keys(task.equipment || {})
+        ]));
+        const machToShow = machKeys.map(k => {
+            return machineryCatalog.find(r => r.id === k) || { id: k, name: k, unit: 'hs' };
+        });
+
+        let currentProgress = log.progress !== undefined ? log.progress : (task.progress || 0);
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
+                <div class="bg-slate-900 border border-amber-500/50 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    
+                    <div class="p-4 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="edit-3" class="w-5 h-5 text-amber-400"></i>
+                            <div>
+                                <h3 class="text-sm font-bold text-white">Editar Parte Diario Asentado</h3>
+                                <p class="text-[11px] text-slate-400 truncate max-w-[280px]">${task.tag ? `[${task.tag}] ` : ''}${task.name}</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-cancel-edit text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" title="Volver al Parte Diario">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="p-4 space-y-4 text-xs overflow-y-auto custom-scrollbar flex-grow">
+                        
+                        <!-- Fecha del Parte -->
+                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 flex items-center justify-between gap-2">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-200">Fecha del Parte Diario</label>
+                                <span class="text-[10px] text-slate-400">Jornada laboral imputada</span>
+                            </div>
+                            <input type="date" id="edit-daily-date" value="${log.date || ''}" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-white font-mono text-xs focus:border-amber-500 focus:outline-none">
+                        </div>
+
+                        <!-- Avance Físico -->
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-bold text-slate-200">Avance Físico Reportado:</span>
+                                <span id="edit-quick-pct-label" class="font-mono font-bold text-amber-400 text-sm">${currentProgress}%</span>
+                            </div>
+                            <div class="grid grid-cols-5 gap-1.5 mb-2">
+                                <button type="button" class="btn-edit-set-pct py-1.5 bg-slate-700 hover:bg-amber-600 text-white rounded-lg font-bold transition-colors cursor-pointer" data-pct="25">25%</button>
+                                <button type="button" class="btn-edit-set-pct py-1.5 bg-slate-700 hover:bg-amber-600 text-white rounded-lg font-bold transition-colors cursor-pointer" data-pct="50">50%</button>
+                                <button type="button" class="btn-edit-set-pct py-1.5 bg-slate-700 hover:bg-amber-600 text-white rounded-lg font-bold transition-colors cursor-pointer" data-pct="75">75%</button>
+                                <button type="button" class="btn-edit-set-pct py-1.5 bg-slate-700 hover:bg-amber-600 text-white rounded-lg font-bold transition-colors cursor-pointer" data-pct="100">100%</button>
+                                <button type="button" class="btn-edit-adjust-pct py-1.5 bg-slate-700 hover:bg-amber-600 text-white rounded-lg font-bold transition-colors cursor-pointer" data-adjust="10">+10%</button>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="text-[11px] text-slate-400">Ajuste manual:</label>
+                                <input type="number" min="0" max="100" id="edit-daily-progress-input" value="${currentProgress}" class="w-20 bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-amber-500 focus:outline-none">
+                                <span class="text-slate-400">%</span>
+                            </div>
+                        </div>
+
+                        <!-- Horas-Hombre de la Jornada -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="font-bold text-slate-300 flex items-center gap-1">
+                                    <i data-lucide="users" class="w-3.5 h-3.5 text-cyan-400"></i> Horas-Hombre Asentadas en esta Jornada
+                                </label>
+                                <span class="text-[10px] text-slate-400">Modifica el valor para corregir el acumulado</span>
+                            </div>
+                            <div id="edit-daily-labor-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                ${laborToShow.map(res => {
+                                    const loggedHrs = (log.labor && log.labor[res.id]) !== undefined ? log.labor[res.id] : 0;
+                                    return `
+                                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 edit-daily-labor-item" data-res-id="${res.id}">
+                                            <div class="flex items-center justify-between text-[10px] mb-1">
+                                                <span class="text-slate-300 font-semibold truncate" title="${res.name}">${res.name.split('(')[0]}</span>
+                                                <span class="text-cyan-400 font-mono font-bold">${loggedHrs} HH</span>
+                                            </div>
+                                            <input type="number" min="0" step="0.5" id="edit-daily-hh-${res.id}" class="edit-daily-hh-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-amber-500 focus:outline-none" value="${loggedHrs}">
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Horas de Maquinarias / Equipos -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="block font-bold text-slate-300 mb-1 flex items-center gap-1 text-orange-400">
+                                    <i data-lucide="truck" class="w-3.5 h-3.5"></i> Horas de Equipos / Maquinarias
+                                </label>
+                                <span class="text-[10px] text-slate-400">Modifica el valor para corregir el acumulado</span>
+                            </div>
+                            <div id="edit-daily-mach-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                ${machToShow.length > 0 ? machToShow.map(res => {
+                                    const loggedHrs = (log.machinery && log.machinery[res.id]) !== undefined ? log.machinery[res.id] : 0;
+                                    return `
+                                        <div class="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 edit-daily-mach-item" data-res-id="${res.id}">
+                                            <div class="flex items-center justify-between text-[10px] mb-1">
+                                                <span class="text-slate-300 font-semibold truncate" title="${res.name}">${res.name.split('(')[0]}</span>
+                                                <span class="text-orange-400 font-mono font-bold">${loggedHrs} hs</span>
+                                            </div>
+                                            <input type="number" min="0" step="0.5" id="edit-daily-mach-${res.id}" class="edit-daily-mach-input w-full bg-slate-900 border border-slate-700 rounded-lg p-1 text-white font-mono text-center text-xs focus:border-amber-500 focus:outline-none" value="${loggedHrs}">
+                                        </div>
+                                    `;
+                                }).join('') : `<p class="text-slate-500 text-[11px] italic py-1 sm:col-span-2">Sin equipos asignados en este parte.</p>`}
+                            </div>
+                        </div>
+
+                        <!-- Novedad / Observaciones -->
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">Novedad / Observaciones de Jornada</label>
+                            <input type="text" id="edit-daily-note" value="${(log.notes || '').replace(/"/g, '&quot;')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white focus:outline-none focus:border-amber-500 text-xs">
+                        </div>
+
+                    </div>
+
+                    <div class="p-3 bg-slate-800/80 border-t border-slate-700 flex justify-between items-center gap-2">
+                        <button type="button" class="btn-cancel-edit px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer">
+                            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Volver
+                        </button>
+                        <button type="button" id="btn-save-edit-daily" class="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
+                            <i data-lucide="check" class="w-4 h-4"></i> Guardar Corrección
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        // Listeners para botones de porcentaje
+        const pctLabel = document.getElementById('edit-quick-pct-label');
+        const pctInput = document.getElementById('edit-daily-progress-input');
+
+        this.modalRoot.querySelectorAll('.btn-edit-set-pct').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentProgress = parseInt(btn.dataset.pct);
+                if (pctLabel) pctLabel.textContent = `${currentProgress}%`;
+                if (pctInput) pctInput.value = currentProgress;
+            });
+        });
+
+        this.modalRoot.querySelectorAll('.btn-edit-adjust-pct').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const adj = parseInt(btn.dataset.adjust);
+                currentProgress = Math.min(100, Math.max(0, currentProgress + adj));
+                if (pctLabel) pctLabel.textContent = `${currentProgress}%`;
+                if (pctInput) pctInput.value = currentProgress;
+            });
+        });
+
+        if (pctInput) {
+            pctInput.addEventListener('input', (e) => {
+                const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                currentProgress = val;
+                if (pctLabel) pctLabel.textContent = `${currentProgress}%`;
+            });
+        }
+
+        // Cancelar y volver al parte diario
+        this.modalRoot.querySelectorAll('.btn-cancel-edit').forEach(btn => {
+            btn.addEventListener('click', () => this.openDailyLog(taskId));
+        });
+
+        // Guardar cambios
+        const saveBtn = document.getElementById('btn-save-edit-daily');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                const date = document.getElementById('edit-daily-date')?.value || log.date;
+                const note = document.getElementById('edit-daily-note')?.value || '';
+
+                const laborUpdated = {};
+                document.querySelectorAll('#edit-daily-labor-container .edit-daily-labor-item').forEach(item => {
+                    const rId = item.dataset.resId;
+                    const inp = document.getElementById(`edit-daily-hh-${rId}`);
+                    const val = inp ? parseFloat(inp.value) : 0;
+                    if (val > 0) laborUpdated[rId] = val;
+                });
+
+                const machUpdated = {};
+                document.querySelectorAll('#edit-daily-mach-container .edit-daily-mach-item').forEach(item => {
+                    const rId = item.dataset.resId;
+                    const inp = document.getElementById(`edit-daily-mach-${rId}`);
+                    const val = inp ? parseFloat(inp.value) : 0;
+                    if (val > 0) machUpdated[rId] = val;
+                });
+
+                this.store.updateDailyLog(taskId, logId, {
+                    date,
+                    progress: currentProgress,
+                    labor: laborUpdated,
+                    machinery: machUpdated,
+                    notes: note
+                });
+
+                this.showToast(`Parte diario del ${date} corregido exitosamente.`);
+                this.openDailyLog(taskId);
             });
         }
 
