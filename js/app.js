@@ -202,6 +202,16 @@ class AppController {
             });
         }
 
+        // Botón para crear nueva tarea directamente en Pendientes (sin fecha definida)
+        const btnAddBacklogTask = document.getElementById('btn-add-backlog-task');
+        if (btnAddBacklogTask) {
+            btnAddBacklogTask.addEventListener('click', () => {
+                if (window.appModals) {
+                    window.appModals.openTaskCreator({ defaultToBacklog: true });
+                }
+            });
+        }
+
         // Toggle Gaveta Lateral de Tareas de Montaje (Accesible en las 3 pestañas)
         const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
         const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
@@ -334,18 +344,8 @@ class AppController {
             }
         }
 
-        if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar bandeja de pendientes
-            if (backlogSidebar) {
-                backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('flex');
-            }
-            if (btnToggleBacklog) {
-                btnToggleBacklog.classList.add('hidden');
-                btnToggleBacklog.classList.remove('flex');
-            }
-        } else if (activeTab === 'real') {
-            // Pestaña Real: Permitir abrir bandeja de pendientes
+        if (activeTab === 'estimated' || activeTab === 'real') {
+            // Pestañas Estimado y Real: Mostrar botón de Pendientes
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');

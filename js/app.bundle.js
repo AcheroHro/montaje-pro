@@ -1475,6 +1475,44 @@ class ProjectStore {
         }
     }
 
+    // Intercambiar posición de dos filas de tareas (Drag & Drop en las 3 pestañas)
+    swapTasks(taskIdA, taskIdB) {
+        if (this.state.isSupervisionMode) return false;
+        const project = this.getActiveProject();
+        if (!project || !project.tasks) return false;
+
+        const idxA = project.tasks.findIndex(t => t.id === taskIdA);
+        const idxB = project.tasks.findIndex(t => t.id === taskIdB);
+
+        if (idxA !== -1 && idxB !== -1 && idxA !== idxB) {
+            const temp = project.tasks[idxA];
+            project.tasks[idxA] = project.tasks[idxB];
+            project.tasks[idxB] = temp;
+            this.notify();
+            return true;
+        }
+        return false;
+    }
+
+    // Reordenar tarea a la posición de otra tarea
+    reorderTasks(sourceTaskId, targetTaskId, placeAfter = false) {
+        if (this.state.isSupervisionMode) return false;
+        const project = this.getActiveProject();
+        if (!project || !project.tasks) return false;
+
+        const fromIdx = project.tasks.findIndex(t => t.id === sourceTaskId);
+        const toIdx = project.tasks.findIndex(t => t.id === targetTaskId);
+
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+            const [moved] = project.tasks.splice(fromIdx, 1);
+            const insertIdx = placeAfter ? (toIdx > fromIdx ? toIdx : toIdx + 1) : (toIdx > fromIdx ? toIdx - 1 : toIdx);
+            project.tasks.splice(Math.max(0, Math.min(project.tasks.length, insertIdx)), 0, moved);
+            this.notify();
+            return true;
+        }
+        return false;
+    }
+
     // Actualizar tarea existente
     updateTask(taskId, updatedFields) {
         if (this.state.isSupervisionMode) return;
@@ -1786,6 +1824,7 @@ class TimelineRenderer {
 
         this.todayStr = '2026-09-08'; // Fecha simulada de corte de obra
         this.draggedTaskId = null;
+        this.draggedRowTaskId = null;
         this.montageSearchQuery = '';
 
         this.initEvents();
@@ -2070,20 +2109,57 @@ class TimelineRenderer {
                         <span class="text-slate-300 font-bold">${task.durationDays}d</span>
                     </div>
 
-                    <!-- Botones de Acción Rápida -->
-                    <div class="flex items-center gap-1.5 pt-1 border-t border-slate-700/60">
-                        <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
-                            <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
-                        </button>
-                        <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
-                            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
-                        </button>
+                    <!-- Botones de Acción Rápida y Reordenamiento -->
+                    <div class="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-700/60">
+                        <div class="flex items-center gap-1">
+                            <button type="button" class="btn-sidebar-moveup p-1.5 rounded-lg bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-amber-400 transition-colors" data-task-id="${task.id}" title="Subir fila">
+                                <i data-lucide="arrow-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button type="button" class="btn-sidebar-movedown p-1.5 rounded-lg bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-amber-400 transition-colors" data-task-id="${task.id}" title="Bajar fila">
+                                <i data-lucide="arrow-down" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-1 justify-end">
+                            <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
+                                <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
+                            </button>
+                            <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
+                                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
         });
 
         this.montageContainer.innerHTML = html;
+
+        // Listeners para subir/bajar fila desde la barra lateral
+        this.montageContainer.querySelectorAll('.btn-sidebar-moveup').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const project = this.store.getActiveProject();
+                if (!project || !project.tasks) return;
+                const idx = project.tasks.findIndex(t => t.id === tid);
+                if (idx > 0) {
+                    this.store.swapTasks(project.tasks[idx].id, project.tasks[idx - 1].id);
+                }
+            });
+        });
+
+        this.montageContainer.querySelectorAll('.btn-sidebar-movedown').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const project = this.store.getActiveProject();
+                if (!project || !project.tasks) return;
+                const idx = project.tasks.findIndex(t => t.id === tid);
+                if (idx !== -1 && idx < project.tasks.length - 1) {
+                    this.store.swapTasks(project.tasks[idx].id, project.tasks[idx + 1].id);
+                }
+            });
+        });
 
         // Listeners de los botones dentro de la barra
         this.montageContainer.querySelectorAll('.btn-sidebar-dailylog').forEach(b => {
@@ -2274,8 +2350,10 @@ class TimelineRenderer {
             `;
         });
 
+        // Ancho de columna del tirador para reordenar filas
+        const rowHandleWidth = 32;
         // Ensamblado final de ancho del calendario
-        const totalTimelineWidth = calendarDates.length * this.columnWidth;
+        const totalTimelineWidth = (calendarDates.length * this.columnWidth) + rowHandleWidth;
 
         // 2. Construcción de los carriles de tareas (Swimlanes)
         let lanesHtml = '';
@@ -2289,6 +2367,10 @@ class TimelineRenderer {
                 
                 <!-- Barra superior de calendario (Gantt puro sin columnas laterales dentro del calendario) -->
                 <div class="sticky top-0 z-20 flex bg-slate-900/95 backdrop-blur border-b border-slate-700/80 shadow-md" style="width: ${totalTimelineWidth}px;">
+                    <!-- Cabecera sticky para el tirador de reordenar filas -->
+                    <div class="timeline-row-reorder-header sticky left-0 z-30 flex-shrink-0 w-8 flex items-center justify-center bg-slate-900 border-r border-slate-700/80 text-slate-500" title="Arrastra el número de fila para intercambiar el orden">
+                        <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-slate-400"></i>
+                    </div>
                     <div class="flex">${headerColsHtml}</div>
                 </div>
 
@@ -2353,7 +2435,9 @@ class TimelineRenderer {
     /**
      * Renderiza el carril de una tarea con su barra o doble barra (en Comparativa)
      */
-    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex, totalTimelineWidth) {
+    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, index, totalTimelineWidth) {
+        const rowIndex = index;
+        const rowHandleWidth = 32;
         const disciplines = this.store.getDisciplines();
         const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: 'General', badgeClass: 'bg-slate-700 text-slate-300' };
         const taskConflictList = conflicts.taskConflicts ? conflicts.taskConflicts[task.id] : null;
@@ -2402,15 +2486,28 @@ class TimelineRenderer {
             statusBadge = { bg: 'bg-amber-500', border: 'border-amber-400', text: 'text-amber-400', label: 'Pendiente' };
         }
 
-        const laneWidth = totalTimelineWidth || (calendarDates.length * this.columnWidth);
+        const laneWidth = totalTimelineWidth || ((calendarDates.length * this.columnWidth) + rowHandleWidth);
 
         return `
             <div class="task-lane relative flex items-center py-2 h-20 hover:bg-slate-800/30 transition-colors border-b border-slate-800/60 group" 
                  style="width: ${laneWidth}px;" 
-                 data-task-id="${task.id}">
+                 data-task-id="${task.id}"
+                 data-row-index="${rowIndex}">
                 
+                <!-- Tirador sticky para arrastrar e intercambiar fila en las 3 pestañas -->
+                <div class="row-drag-handle sticky left-0 z-20 flex-shrink-0 flex items-center justify-center w-8 h-full bg-slate-900/95 hover:bg-slate-800 border-r border-slate-700/60 cursor-grab active:cursor-grabbing text-slate-400 hover:text-amber-400 group/handle select-none transition-colors"
+                     title="Arrastra para intercambiar posición de fila con otra tarea"
+                     draggable="${!isSupervision}"
+                     data-task-id="${task.id}"
+                     data-row-index="${rowIndex}">
+                    <div class="flex flex-col items-center justify-center pointer-events-none">
+                        <span class="text-[10px] font-mono font-bold text-slate-400 group-hover/handle:text-amber-400 leading-none">${rowIndex + 1}</span>
+                        <i data-lucide="grip-vertical" class="w-3.5 h-3.5 text-slate-500 group-hover/handle:text-amber-400 mt-0.5"></i>
+                    </div>
+                </div>
+
                 <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
-                <div class="absolute inset-0 flex">
+                <div class="absolute inset-y-0 right-0 flex" style="left: ${rowHandleWidth}px;">
                     ${calendarDates.map(d => `
                         <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
                              style="width: ${this.columnWidth}px;" 
@@ -2421,7 +2518,7 @@ class TimelineRenderer {
                 ${isPlaced ? `
                     <!-- BARRA(S) DE TAREA INTERACTIVA(S) -->
                     <div class="timeline-bar-container absolute top-2 bottom-2 rounded-xl transition-all select-none cursor-pointer"
-                         style="left: ${leftOffset}px; width: ${barWidth}px;"
+                         style="left: ${leftOffset + rowHandleWidth}px; width: ${barWidth}px;"
                          draggable="${!isSupervision}"
                          data-task-id="${task.id}"
                          title="${task.name} (${task.durationDays}d)">
@@ -2536,10 +2633,11 @@ class TimelineRenderer {
         const isSupervision = this.store.state.isSupervisionMode;
         if (isSupervision) return;
 
-        // Columnas receptoras de Drop en la cabecera y en todas las celdas de los carriles
+        // 1. Columnas receptoras de Drop para programar fechas (calendario y cabecera)
         const dropTargets = this.container.querySelectorAll('.timeline-day-header, .timeline-grid-cell');
         dropTargets.forEach(col => {
             col.addEventListener('dragover', (e) => {
+                if (this.draggedRowTaskId) return; // Si se arrastra una fila completa, ignorar celdas de fecha
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 col.classList.add('bg-amber-500/20');
@@ -2550,6 +2648,7 @@ class TimelineRenderer {
             });
 
             col.addEventListener('drop', (e) => {
+                if (this.draggedRowTaskId) return; // Si se arrastra una fila completa, no cambiar fechas
                 e.preventDefault();
                 col.classList.remove('bg-amber-500/20');
                 const targetDate = col.dataset.date;
@@ -2560,7 +2659,7 @@ class TimelineRenderer {
             });
         });
 
-        // Barras existentes en el timeline para arrastrar y cambiar fecha
+        // 2. Barras existentes en el timeline para arrastrar y cambiar fecha
         this.container.querySelectorAll('.timeline-bar-container').forEach(bar => {
             bar.addEventListener('dragstart', (e) => {
                 const taskId = bar.dataset.taskId;
@@ -2573,6 +2672,66 @@ class TimelineRenderer {
             bar.addEventListener('dragend', () => {
                 this.draggedTaskId = null;
                 bar.classList.remove('opacity-40');
+            });
+        });
+
+        // 3. Arrastre de filas para intercambiar posición (disponible en las 3 pestañas: Estimado, Real y Comparativa)
+        this.container.querySelectorAll('.row-drag-handle').forEach(handle => {
+            handle.addEventListener('dragstart', (e) => {
+                const taskId = handle.dataset.taskId;
+                this.draggedRowTaskId = taskId;
+                e.dataTransfer.setData('application/x-task-row', taskId);
+                e.dataTransfer.setData('text/plain', taskId);
+                e.dataTransfer.effectAllowed = 'move';
+                const lane = handle.closest('.task-lane');
+                if (lane) {
+                    lane.classList.add('opacity-40', 'ring-2', 'ring-amber-500');
+                }
+            });
+
+            handle.addEventListener('dragend', () => {
+                const lane = handle.closest('.task-lane');
+                if (lane) {
+                    lane.classList.remove('opacity-40', 'ring-2', 'ring-amber-500');
+                }
+                this.draggedRowTaskId = null;
+                this.container.querySelectorAll('.task-lane').forEach(l => {
+                    l.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                });
+            });
+        });
+
+        // Receptores de drop en los carriles para intercambiar filas
+        this.container.querySelectorAll('.task-lane').forEach(lane => {
+            lane.addEventListener('dragover', (e) => {
+                if (!this.draggedRowTaskId) return;
+                const targetTaskId = lane.dataset.taskId;
+                if (targetTaskId && targetTaskId !== this.draggedRowTaskId) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    lane.classList.add('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                }
+            });
+
+            lane.addEventListener('dragleave', (e) => {
+                if (!lane.contains(e.relatedTarget)) {
+                    lane.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                }
+            });
+
+            lane.addEventListener('drop', (e) => {
+                if (!this.draggedRowTaskId) return;
+                e.preventDefault();
+                lane.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                const targetTaskId = lane.dataset.taskId;
+                const sourceTaskId = this.draggedRowTaskId;
+                this.draggedRowTaskId = null;
+                if (sourceTaskId && targetTaskId && sourceTaskId !== targetTaskId) {
+                    const swapped = this.store.swapTasks(sourceTaskId, targetTaskId);
+                    if (swapped && window.appToast) {
+                        window.appToast.success('Posición de tareas intercambiada');
+                    }
+                }
             });
         });
     }
@@ -4998,6 +5157,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
         ];
         let tasksCreatedCount = (wizardContext && wizardContext.tasksCreatedCount) || 0;
+        const isWizard = Boolean(wizardContext && wizardContext.createdProject);
+        const isBacklogMode = Boolean(wizardContext && wizardContext.defaultToBacklog);
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
@@ -5005,16 +5166,18 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     
                     <div class="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
                         <div class="flex items-center gap-2">
-                            <i data-lucide="${wizardContext ? 'list-plus' : 'plus-square'}" class="w-5 h-5 text-amber-400"></i>
+                            <i data-lucide="${isWizard ? 'list-plus' : (isBacklogMode ? 'inbox' : 'plus-square')}" class="w-5 h-5 text-amber-400"></i>
                             <div>
                                 <div class="flex items-center gap-2 flex-wrap">
-                                    <h3 class="text-base font-bold text-white">${wizardContext ? 'Alta de Tareas de Montaje' : 'Nueva Tarea de Montaje'}</h3>
-                                    ${wizardContext ? `
+                                    <h3 class="text-base font-bold text-white">${isWizard ? 'Alta de Tareas de Montaje' : (isBacklogMode ? 'Nueva Tarea en Pendientes' : 'Nueva Tarea de Montaje')}</h3>
+                                    ${isWizard ? `
                                         <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 3 de 3: Tareas Iniciales</span>
-                                    ` : ''}
+                                    ` : (isBacklogMode ? `
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Bandeja de Pendientes</span>
+                                    ` : '')}
                                 </div>
                                 <p class="text-xs text-slate-400">
-                                    ${wizardContext ? `Agregando tareas a la nueva obra: <strong class="text-white">${p ? `[${p.code}] ${p.name}` : ''}</strong>` : 'Configura los parámetros, dotación y programación de la tarea'}
+                                    ${isWizard ? `Agregando tareas a la nueva obra: <strong class="text-white">${p ? `[${p.code}] ${p.name}` : ''}</strong>` : (isBacklogMode ? 'Crea una tarea sin fecha de inicio definida para asignarla al calendario cuando comience.' : 'Configura los parámetros, dotación y programación de la tarea')}
                                 </p>
                             </div>
                         </div>
@@ -5023,7 +5186,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         </button>
                     </div>
 
-                    ${wizardContext ? `
+                    ${isWizard ? `
                         <!-- Stepper Navigation Bar -->
                         <div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between text-xs">
                             <div class="flex items-center gap-2 flex-wrap">
@@ -5075,14 +5238,15 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <!-- Fecha de inicio y destino -->
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                                <label class="block text-slate-300 font-semibold mb-1">Fecha de Inicio Programada</label>
-                                <input type="date" name="estimatedStart" value="${p ? p.startDate : '2026-09-01'}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono">
+                                <label class="block text-slate-300 font-semibold mb-1">Fecha de Inicio Programada ${isBacklogMode ? '<span class="text-slate-500 font-normal">(Opcional)</span>' : ''}</label>
+                                <input type="date" name="estimatedStart" value="${isBacklogMode ? '' : (p ? p.startDate : '2026-09-01')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono" placeholder="Sin fecha definida">
+                                ${isBacklogMode ? `<p class="text-[10px] text-slate-400 mt-1">Déjala vacía si aún no está definido el día de comienzo de la tarea.</p>` : ''}
                             </div>
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Destino de la Tarea</label>
                                 <select name="targetDestination" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-semibold">
-                                    <option value="calendar" selected>Programar directo en Calendario</option>
-                                    <option value="backlog">Enviar a Bandeja de Pendientes</option>
+                                    <option value="backlog" ${isBacklogMode ? 'selected' : ''}>Enviar a Bandeja de Pendientes (Sin fecha)</option>
+                                    <option value="calendar" ${!isBacklogMode ? 'selected' : ''}>Programar directo en Calendario</option>
                                 </select>
                             </div>
                         </div>
@@ -5142,8 +5306,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     ` : `
                         <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
                             <button type="button" class="btn-close-modal px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700">Cancelar</button>
-                            <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20">
-                                <i data-lucide="check" class="w-4 h-4"></i> Guardar Tarea
+                            <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer">
+                                <i data-lucide="${isBacklogMode ? 'inbox' : 'check'}" class="w-4 h-4"></i> ${isBacklogMode ? 'Guardar en Pendientes' : 'Guardar Tarea'}
                             </button>
                         </div>
                     `}
@@ -5257,8 +5421,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             });
 
             const targetDest = formData.get('targetDestination');
-            const startDate = formData.get('estimatedStart');
-            const addToBacklog = targetDest === 'backlog';
+            const startDate = (formData.get('estimatedStart') || '').trim();
+            const addToBacklog = targetDest === 'backlog' || !startDate;
 
             return {
                 name,
@@ -5268,7 +5432,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     tag: (formData.get('tag') || '').trim(),
                     discipline: formData.get('discipline') || 'piping',
                     durationDays: parseInt(formData.get('durationDays')) || 3,
-                    estimatedStart: startDate,
+                    estimatedStart: addToBacklog ? null : startDate,
                     notes: (formData.get('notes') || '').trim(),
                     labor,
                     machinery,
@@ -6403,6 +6567,16 @@ class AppController {
             });
         }
 
+        // Botón para crear nueva tarea directamente en Pendientes (sin fecha definida)
+        const btnAddBacklogTask = document.getElementById('btn-add-backlog-task');
+        if (btnAddBacklogTask) {
+            btnAddBacklogTask.addEventListener('click', () => {
+                if (window.appModals) {
+                    window.appModals.openTaskCreator({ defaultToBacklog: true });
+                }
+            });
+        }
+
         // Toggle Gaveta Lateral de Tareas de Montaje (Accesible en las 3 pestañas)
         const btnToggleTasksSidebar = document.getElementById('btn-toggle-tasks-sidebar');
         const montageTasksSidebar = document.getElementById('montage-tasks-sidebar');
@@ -6535,18 +6709,8 @@ class AppController {
             }
         }
 
-        if (activeTab === 'estimated') {
-            // Pestaña Estimado: Ocultar bandeja de pendientes
-            if (backlogSidebar) {
-                backlogSidebar.classList.add('hidden');
-                backlogSidebar.classList.remove('flex');
-            }
-            if (btnToggleBacklog) {
-                btnToggleBacklog.classList.add('hidden');
-                btnToggleBacklog.classList.remove('flex');
-            }
-        } else if (activeTab === 'real') {
-            // Pestaña Real: Permitir abrir bandeja de pendientes
+        if (activeTab === 'estimated' || activeTab === 'real') {
+            // Pestañas Estimado y Real: Mostrar botón de Pendientes
             if (btnToggleBacklog) {
                 btnToggleBacklog.classList.remove('hidden');
                 btnToggleBacklog.classList.add('flex');

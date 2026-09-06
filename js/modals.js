@@ -2399,6 +2399,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             ...(catalogs.equipment || []).map(e => ({ ...e, _cat: 'equipment' }))
         ];
         let tasksCreatedCount = (wizardContext && wizardContext.tasksCreatedCount) || 0;
+        const isWizard = Boolean(wizardContext && wizardContext.createdProject);
+        const isBacklogMode = Boolean(wizardContext && wizardContext.defaultToBacklog);
 
         const html = `
             <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
@@ -2406,16 +2408,18 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     
                     <div class="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
                         <div class="flex items-center gap-2">
-                            <i data-lucide="${wizardContext ? 'list-plus' : 'plus-square'}" class="w-5 h-5 text-amber-400"></i>
+                            <i data-lucide="${isWizard ? 'list-plus' : (isBacklogMode ? 'inbox' : 'plus-square')}" class="w-5 h-5 text-amber-400"></i>
                             <div>
                                 <div class="flex items-center gap-2 flex-wrap">
-                                    <h3 class="text-base font-bold text-white">${wizardContext ? 'Alta de Tareas de Montaje' : 'Nueva Tarea de Montaje'}</h3>
-                                    ${wizardContext ? `
+                                    <h3 class="text-base font-bold text-white">${isWizard ? 'Alta de Tareas de Montaje' : (isBacklogMode ? 'Nueva Tarea en Pendientes' : 'Nueva Tarea de Montaje')}</h3>
+                                    ${isWizard ? `
                                         <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Paso 3 de 3: Tareas Iniciales</span>
-                                    ` : ''}
+                                    ` : (isBacklogMode ? `
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">Bandeja de Pendientes</span>
+                                    ` : '')}
                                 </div>
                                 <p class="text-xs text-slate-400">
-                                    ${wizardContext ? `Agregando tareas a la nueva obra: <strong class="text-white">${p ? `[${p.code}] ${p.name}` : ''}</strong>` : 'Configura los parámetros, dotación y programación de la tarea'}
+                                    ${isWizard ? `Agregando tareas a la nueva obra: <strong class="text-white">${p ? `[${p.code}] ${p.name}` : ''}</strong>` : (isBacklogMode ? 'Crea una tarea sin fecha de inicio definida para asignarla al calendario cuando comience.' : 'Configura los parámetros, dotación y programación de la tarea')}
                                 </p>
                             </div>
                         </div>
@@ -2424,7 +2428,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         </button>
                     </div>
 
-                    ${wizardContext ? `
+                    ${isWizard ? `
                         <!-- Stepper Navigation Bar -->
                         <div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between text-xs">
                             <div class="flex items-center gap-2 flex-wrap">
@@ -2476,14 +2480,15 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <!-- Fecha de inicio y destino -->
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                                <label class="block text-slate-300 font-semibold mb-1">Fecha de Inicio Programada</label>
-                                <input type="date" name="estimatedStart" value="${p ? p.startDate : '2026-09-01'}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono">
+                                <label class="block text-slate-300 font-semibold mb-1">Fecha de Inicio Programada ${isBacklogMode ? '<span class="text-slate-500 font-normal">(Opcional)</span>' : ''}</label>
+                                <input type="date" name="estimatedStart" value="${isBacklogMode ? '' : (p ? p.startDate : '2026-09-01')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-mono" placeholder="Sin fecha definida">
+                                ${isBacklogMode ? `<p class="text-[10px] text-slate-400 mt-1">Déjala vacía si aún no está definido el día de comienzo de la tarea.</p>` : ''}
                             </div>
                             <div>
                                 <label class="block text-slate-300 font-semibold mb-1">Destino de la Tarea</label>
                                 <select name="targetDestination" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-amber-500 focus:outline-none font-semibold">
-                                    <option value="calendar" selected>Programar directo en Calendario</option>
-                                    <option value="backlog">Enviar a Bandeja de Pendientes</option>
+                                    <option value="backlog" ${isBacklogMode ? 'selected' : ''}>Enviar a Bandeja de Pendientes (Sin fecha)</option>
+                                    <option value="calendar" ${!isBacklogMode ? 'selected' : ''}>Programar directo en Calendario</option>
                                 </select>
                             </div>
                         </div>
@@ -2543,8 +2548,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     ` : `
                         <div class="p-4 bg-slate-800/90 border-t border-slate-700 flex justify-end gap-2">
                             <button type="button" class="btn-close-modal px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700">Cancelar</button>
-                            <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20">
-                                <i data-lucide="check" class="w-4 h-4"></i> Guardar Tarea
+                            <button type="button" id="btn-save-new-task" class="px-5 py-2 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer">
+                                <i data-lucide="${isBacklogMode ? 'inbox' : 'check'}" class="w-4 h-4"></i> ${isBacklogMode ? 'Guardar en Pendientes' : 'Guardar Tarea'}
                             </button>
                         </div>
                     `}
@@ -2658,8 +2663,8 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
             });
 
             const targetDest = formData.get('targetDestination');
-            const startDate = formData.get('estimatedStart');
-            const addToBacklog = targetDest === 'backlog';
+            const startDate = (formData.get('estimatedStart') || '').trim();
+            const addToBacklog = targetDest === 'backlog' || !startDate;
 
             return {
                 name,
@@ -2669,7 +2674,7 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                     tag: (formData.get('tag') || '').trim(),
                     discipline: formData.get('discipline') || 'piping',
                     durationDays: parseInt(formData.get('durationDays')) || 3,
-                    estimatedStart: startDate,
+                    estimatedStart: addToBacklog ? null : startDate,
                     notes: (formData.get('notes') || '').trim(),
                     labor,
                     machinery,

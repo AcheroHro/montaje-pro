@@ -273,8 +273,8 @@
                     <option value="completed">Finalizadas</option>
                 </select>
 
-                <!-- Conmutadores Laterales para Pestaña Real (Pendientes y Tareas de Montaje) -->
-                <button id="btn-toggle-backlog-real" class="hidden px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold items-center gap-1.5 transition-all" title="Mostrar/Ocultar Bandeja Lateral de Pendientes">
+                <!-- Conmutadores Laterales (Pendientes y Tareas de Montaje) -->
+                <button id="btn-toggle-backlog-real" class="flex px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold items-center gap-1.5 transition-all cursor-pointer" title="Mostrar/Ocultar Bandeja Lateral de Pendientes">
                     <i data-lucide="inbox" class="w-4 h-4"></i>
                     <span>Pendientes (<span id="backlog-count-badge-real">0</span>)</span>
                 </button>
@@ -314,6 +314,14 @@
                 </div>
                 <button id="btn-close-backlog-sidebar" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" title="Ocultar barra de pendientes">
                     <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- Botón para agregar nueva tarea pendiente sin fecha definida -->
+            <div class="mb-2.5">
+                <button type="button" id="btn-add-backlog-task" class="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 transition-all cursor-pointer">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>+ Nueva Tarea Pendiente</span>
                 </button>
             </div>
 

@@ -24,6 +24,7 @@ export class TimelineRenderer {
 
         this.todayStr = '2026-09-08'; // Fecha simulada de corte de obra
         this.draggedTaskId = null;
+        this.draggedRowTaskId = null;
         this.montageSearchQuery = '';
 
         this.initEvents();
@@ -308,20 +309,57 @@ export class TimelineRenderer {
                         <span class="text-slate-300 font-bold">${task.durationDays}d</span>
                     </div>
 
-                    <!-- Botones de Acción Rápida -->
-                    <div class="flex items-center gap-1.5 pt-1 border-t border-slate-700/60">
-                        <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
-                            <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
-                        </button>
-                        <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
-                            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
-                        </button>
+                    <!-- Botones de Acción Rápida y Reordenamiento -->
+                    <div class="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-700/60">
+                        <div class="flex items-center gap-1">
+                            <button type="button" class="btn-sidebar-moveup p-1.5 rounded-lg bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-amber-400 transition-colors" data-task-id="${task.id}" title="Subir fila">
+                                <i data-lucide="arrow-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button type="button" class="btn-sidebar-movedown p-1.5 rounded-lg bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-amber-400 transition-colors" data-task-id="${task.id}" title="Bajar fila">
+                                <i data-lucide="arrow-down" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-1 justify-end">
+                            <button type="button" class="btn-sidebar-dailylog flex-1 px-2 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors" data-task-id="${task.id}">
+                                <i data-lucide="check-circle" class="w-3 h-3 text-emerald-400"></i> Parte Diario
+                            </button>
+                            <button type="button" class="btn-sidebar-edittask p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors" data-task-id="${task.id}" title="Editar tarea">
+                                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
         });
 
         this.montageContainer.innerHTML = html;
+
+        // Listeners para subir/bajar fila desde la barra lateral
+        this.montageContainer.querySelectorAll('.btn-sidebar-moveup').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const project = this.store.getActiveProject();
+                if (!project || !project.tasks) return;
+                const idx = project.tasks.findIndex(t => t.id === tid);
+                if (idx > 0) {
+                    this.store.swapTasks(project.tasks[idx].id, project.tasks[idx - 1].id);
+                }
+            });
+        });
+
+        this.montageContainer.querySelectorAll('.btn-sidebar-movedown').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = btn.dataset.taskId;
+                const project = this.store.getActiveProject();
+                if (!project || !project.tasks) return;
+                const idx = project.tasks.findIndex(t => t.id === tid);
+                if (idx !== -1 && idx < project.tasks.length - 1) {
+                    this.store.swapTasks(project.tasks[idx].id, project.tasks[idx + 1].id);
+                }
+            });
+        });
 
         // Listeners de los botones dentro de la barra
         this.montageContainer.querySelectorAll('.btn-sidebar-dailylog').forEach(b => {
@@ -512,8 +550,10 @@ export class TimelineRenderer {
             `;
         });
 
+        // Ancho de columna del tirador para reordenar filas
+        const rowHandleWidth = 32;
         // Ensamblado final de ancho del calendario
-        const totalTimelineWidth = calendarDates.length * this.columnWidth;
+        const totalTimelineWidth = (calendarDates.length * this.columnWidth) + rowHandleWidth;
 
         // 2. Construcción de los carriles de tareas (Swimlanes)
         let lanesHtml = '';
@@ -527,6 +567,10 @@ export class TimelineRenderer {
                 
                 <!-- Barra superior de calendario (Gantt puro sin columnas laterales dentro del calendario) -->
                 <div class="sticky top-0 z-20 flex bg-slate-900/95 backdrop-blur border-b border-slate-700/80 shadow-md" style="width: ${totalTimelineWidth}px;">
+                    <!-- Cabecera sticky para el tirador de reordenar filas -->
+                    <div class="timeline-row-reorder-header sticky left-0 z-30 flex-shrink-0 w-8 flex items-center justify-center bg-slate-900 border-r border-slate-700/80 text-slate-500" title="Arrastra el número de fila para intercambiar el orden">
+                        <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-slate-400"></i>
+                    </div>
                     <div class="flex">${headerColsHtml}</div>
                 </div>
 
@@ -591,7 +635,9 @@ export class TimelineRenderer {
     /**
      * Renderiza el carril de una tarea con su barra o doble barra (en Comparativa)
      */
-    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, rowIndex, totalTimelineWidth) {
+    renderTaskLane(task, calendarDates, conflicts, currentTab, isSupervision, index, totalTimelineWidth) {
+        const rowIndex = index;
+        const rowHandleWidth = 32;
         const disciplines = this.store.getDisciplines();
         const discipline = disciplines.find(d => d.id === task.discipline) || disciplines[0] || { name: 'General', badgeClass: 'bg-slate-700 text-slate-300' };
         const taskConflictList = conflicts.taskConflicts ? conflicts.taskConflicts[task.id] : null;
@@ -640,15 +686,28 @@ export class TimelineRenderer {
             statusBadge = { bg: 'bg-amber-500', border: 'border-amber-400', text: 'text-amber-400', label: 'Pendiente' };
         }
 
-        const laneWidth = totalTimelineWidth || (calendarDates.length * this.columnWidth);
+        const laneWidth = totalTimelineWidth || ((calendarDates.length * this.columnWidth) + rowHandleWidth);
 
         return `
             <div class="task-lane relative flex items-center py-2 h-20 hover:bg-slate-800/30 transition-colors border-b border-slate-800/60 group" 
                  style="width: ${laneWidth}px;" 
-                 data-task-id="${task.id}">
+                 data-task-id="${task.id}"
+                 data-row-index="${rowIndex}">
                 
+                <!-- Tirador sticky para arrastrar e intercambiar fila en las 3 pestañas -->
+                <div class="row-drag-handle sticky left-0 z-20 flex-shrink-0 flex items-center justify-center w-8 h-full bg-slate-900/95 hover:bg-slate-800 border-r border-slate-700/60 cursor-grab active:cursor-grabbing text-slate-400 hover:text-amber-400 group/handle select-none transition-colors"
+                     title="Arrastra para intercambiar posición de fila con otra tarea"
+                     draggable="${!isSupervision}"
+                     data-task-id="${task.id}"
+                     data-row-index="${rowIndex}">
+                    <div class="flex flex-col items-center justify-center pointer-events-none">
+                        <span class="text-[10px] font-mono font-bold text-slate-400 group-hover/handle:text-amber-400 leading-none">${rowIndex + 1}</span>
+                        <i data-lucide="grip-vertical" class="w-3.5 h-3.5 text-slate-500 group-hover/handle:text-amber-400 mt-0.5"></i>
+                    </div>
+                </div>
+
                 <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
-                <div class="absolute inset-0 flex">
+                <div class="absolute inset-y-0 right-0 flex" style="left: ${rowHandleWidth}px;">
                     ${calendarDates.map(d => `
                         <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
                              style="width: ${this.columnWidth}px;" 
@@ -659,7 +718,7 @@ export class TimelineRenderer {
                 ${isPlaced ? `
                     <!-- BARRA(S) DE TAREA INTERACTIVA(S) -->
                     <div class="timeline-bar-container absolute top-2 bottom-2 rounded-xl transition-all select-none cursor-pointer"
-                         style="left: ${leftOffset}px; width: ${barWidth}px;"
+                         style="left: ${leftOffset + rowHandleWidth}px; width: ${barWidth}px;"
                          draggable="${!isSupervision}"
                          data-task-id="${task.id}"
                          title="${task.name} (${task.durationDays}d)">
@@ -774,10 +833,11 @@ export class TimelineRenderer {
         const isSupervision = this.store.state.isSupervisionMode;
         if (isSupervision) return;
 
-        // Columnas receptoras de Drop en la cabecera y en todas las celdas de los carriles
+        // 1. Columnas receptoras de Drop para programar fechas (calendario y cabecera)
         const dropTargets = this.container.querySelectorAll('.timeline-day-header, .timeline-grid-cell');
         dropTargets.forEach(col => {
             col.addEventListener('dragover', (e) => {
+                if (this.draggedRowTaskId) return; // Si se arrastra una fila completa, ignorar celdas de fecha
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 col.classList.add('bg-amber-500/20');
@@ -788,6 +848,7 @@ export class TimelineRenderer {
             });
 
             col.addEventListener('drop', (e) => {
+                if (this.draggedRowTaskId) return; // Si se arrastra una fila completa, no cambiar fechas
                 e.preventDefault();
                 col.classList.remove('bg-amber-500/20');
                 const targetDate = col.dataset.date;
@@ -798,7 +859,7 @@ export class TimelineRenderer {
             });
         });
 
-        // Barras existentes en el timeline para arrastrar y cambiar fecha
+        // 2. Barras existentes en el timeline para arrastrar y cambiar fecha
         this.container.querySelectorAll('.timeline-bar-container').forEach(bar => {
             bar.addEventListener('dragstart', (e) => {
                 const taskId = bar.dataset.taskId;
@@ -811,6 +872,66 @@ export class TimelineRenderer {
             bar.addEventListener('dragend', () => {
                 this.draggedTaskId = null;
                 bar.classList.remove('opacity-40');
+            });
+        });
+
+        // 3. Arrastre de filas para intercambiar posición (disponible en las 3 pestañas: Estimado, Real y Comparativa)
+        this.container.querySelectorAll('.row-drag-handle').forEach(handle => {
+            handle.addEventListener('dragstart', (e) => {
+                const taskId = handle.dataset.taskId;
+                this.draggedRowTaskId = taskId;
+                e.dataTransfer.setData('application/x-task-row', taskId);
+                e.dataTransfer.setData('text/plain', taskId);
+                e.dataTransfer.effectAllowed = 'move';
+                const lane = handle.closest('.task-lane');
+                if (lane) {
+                    lane.classList.add('opacity-40', 'ring-2', 'ring-amber-500');
+                }
+            });
+
+            handle.addEventListener('dragend', () => {
+                const lane = handle.closest('.task-lane');
+                if (lane) {
+                    lane.classList.remove('opacity-40', 'ring-2', 'ring-amber-500');
+                }
+                this.draggedRowTaskId = null;
+                this.container.querySelectorAll('.task-lane').forEach(l => {
+                    l.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                });
+            });
+        });
+
+        // Receptores de drop en los carriles para intercambiar filas
+        this.container.querySelectorAll('.task-lane').forEach(lane => {
+            lane.addEventListener('dragover', (e) => {
+                if (!this.draggedRowTaskId) return;
+                const targetTaskId = lane.dataset.taskId;
+                if (targetTaskId && targetTaskId !== this.draggedRowTaskId) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    lane.classList.add('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                }
+            });
+
+            lane.addEventListener('dragleave', (e) => {
+                if (!lane.contains(e.relatedTarget)) {
+                    lane.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                }
+            });
+
+            lane.addEventListener('drop', (e) => {
+                if (!this.draggedRowTaskId) return;
+                e.preventDefault();
+                lane.classList.remove('bg-amber-500/20', 'ring-2', 'ring-amber-400', 'ring-inset');
+                const targetTaskId = lane.dataset.taskId;
+                const sourceTaskId = this.draggedRowTaskId;
+                this.draggedRowTaskId = null;
+                if (sourceTaskId && targetTaskId && sourceTaskId !== targetTaskId) {
+                    const swapped = this.store.swapTasks(sourceTaskId, targetTaskId);
+                    if (swapped && window.appToast) {
+                        window.appToast.success('Posición de tareas intercambiada');
+                    }
+                }
             });
         });
     }

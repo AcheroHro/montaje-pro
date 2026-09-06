@@ -752,6 +752,44 @@ class ProjectStore {
         }
     }
 
+    // Intercambiar posición de dos filas de tareas (Drag & Drop en las 3 pestañas)
+    swapTasks(taskIdA, taskIdB) {
+        if (this.state.isSupervisionMode) return false;
+        const project = this.getActiveProject();
+        if (!project || !project.tasks) return false;
+
+        const idxA = project.tasks.findIndex(t => t.id === taskIdA);
+        const idxB = project.tasks.findIndex(t => t.id === taskIdB);
+
+        if (idxA !== -1 && idxB !== -1 && idxA !== idxB) {
+            const temp = project.tasks[idxA];
+            project.tasks[idxA] = project.tasks[idxB];
+            project.tasks[idxB] = temp;
+            this.notify();
+            return true;
+        }
+        return false;
+    }
+
+    // Reordenar tarea a la posición de otra tarea
+    reorderTasks(sourceTaskId, targetTaskId, placeAfter = false) {
+        if (this.state.isSupervisionMode) return false;
+        const project = this.getActiveProject();
+        if (!project || !project.tasks) return false;
+
+        const fromIdx = project.tasks.findIndex(t => t.id === sourceTaskId);
+        const toIdx = project.tasks.findIndex(t => t.id === targetTaskId);
+
+        if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+            const [moved] = project.tasks.splice(fromIdx, 1);
+            const insertIdx = placeAfter ? (toIdx > fromIdx ? toIdx : toIdx + 1) : (toIdx > fromIdx ? toIdx - 1 : toIdx);
+            project.tasks.splice(Math.max(0, Math.min(project.tasks.length, insertIdx)), 0, moved);
+            this.notify();
+            return true;
+        }
+        return false;
+    }
+
     // Actualizar tarea existente
     updateTask(taskId, updatedFields) {
         if (this.state.isSupervisionMode) return;
