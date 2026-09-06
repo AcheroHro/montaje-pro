@@ -1258,6 +1258,232 @@ export class ModalManager {
     }
 
     // ======================================================================
+    // 3b. MODAL: CONFIGURACIÓN DE DÍA (LABORABLE, FIN DE SEMANA, FERIADO PAGO)
+    // ======================================================================
+    openDayCalendarModal(dateStr) {
+        if (!dateStr) return;
+        const project = this.store.getActiveProject();
+        if (!project) return;
+        
+        if (this.store.state.isSupervisionMode) {
+            this.showToast('El calendario laboral es de solo lectura en modo supervisión.');
+            return;
+        }
+
+        const dayStatus = this.store.getDayStatus(dateStr, project);
+        const autoCost = this.store.getHolidayDailyCost(dateStr, project);
+
+        // Formatear fecha amigable en español
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dateObj = new Date(y, m - 1, d, 12, 0, 0);
+        const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        const formattedDate = `${dayNames[dateObj.getDay()]}, ${d} de ${monthNames[m - 1]} de ${y}`;
+
+        const isCustomConfigured = Boolean(project.calendarConfig && project.calendarConfig.holidays && project.calendarConfig.holidays[dateStr]);
+        const currentType = dayStatus.type; // 'workday' | 'weekend' | 'holiday_paid' | 'holiday_unpaid'
+
+        const crewSize = project.resourceLimits ? Object.values(project.resourceLimits).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
+                <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    
+                    <!-- Cabecera del Modal -->
+                    <div class="p-4 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between flex-shrink-0">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                                <i data-lucide="calendar" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-bold text-white">Configuración del Calendario Laboral</h3>
+                                <p class="text-[11px] text-slate-400 font-mono">${formattedDate} • (${dateStr})</p>
+                            </div>
+                        </div>
+                        <button class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- Contenido y Opciones -->
+                    <div class="p-5 space-y-4 overflow-y-auto custom-scrollbar text-xs">
+                        <div>
+                            <label class="block text-slate-300 font-semibold mb-2">Clasificación para esta Fecha:</label>
+                            
+                            <div class="space-y-2">
+                                <!-- 1. Jornada Laborable Normal -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="workday" ${currentType === 'workday' ? 'checked' : ''} class="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-200">🟢 Jornada Laborable Normal</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Día Hábil</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Se planifican y ejecutan tareas productivas en obra. Costo imputado según horas ejecutadas.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 2. Fin de Semana / Franco Habitual (Sin Costo) -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="weekend" ${currentType === 'weekend' ? 'checked' : ''} class="mt-0.5 text-slate-400 focus:ring-slate-400 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-300">⚪ Fin de Semana / Franco Habitual</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/50 text-slate-300 border border-slate-600/40">Sin Costo</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Día de descanso semanal estándar (Sábados/Domingos). No devenga jornales cargados al presupuesto.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 3. Feriado / Asueto Pago (CON Costo sobre Presupuesto) -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border-2 ${currentType === 'holiday_paid' ? 'border-purple-500/80 bg-purple-950/20' : 'border-purple-500/40 bg-purple-950/10'} hover:bg-purple-950/30 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="holiday_paid" ${currentType === 'holiday_paid' ? 'checked' : ''} class="mt-0.5 text-purple-500 focus:ring-purple-500 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-purple-200">🟣 Feriado / Asueto Pago</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">Afecta Presupuesto ($)</span>
+                                        </div>
+                                        <p class="text-[11px] text-purple-300/80 mt-0.5">No hay tareas físicas, pero se liquida el jornal del personal asignado y se carga como costo directo de obra.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 4. Parada No Laborable Sin Costo -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="holiday_unpaid" ${currentType === 'holiday_unpaid' ? 'checked' : ''} class="mt-0.5 text-rose-400 focus:ring-rose-400 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-300">🔴 Parada No Laborable Sin Costo</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">Sin Jornal</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Día inhábil sin liquidación de haberes (ej. veda climática o suspensión sin goce acordada).</p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Sección de Parámetros de Feriado / Parada -->
+                        <div id="holiday-extra-config" class="space-y-3 p-3.5 bg-slate-950/60 rounded-xl border border-purple-500/30 transition-all ${currentType === 'holiday_paid' || currentType === 'holiday_unpaid' ? '' : 'hidden'}">
+                            <div class="text-[11px] font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <i data-lucide="info" class="w-3.5 h-3.5"></i> Parámetros de Liquidación y Costos
+                            </div>
+                            
+                            <div>
+                                <label class="block text-slate-300 font-semibold mb-1">Nombre / Motivo:</label>
+                                <input type="text" id="input-holiday-name" value="${dayStatus.name || ''}" placeholder="Ej: Feriado Nacional, Asueto Petrolero, etc." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500">
+                            </div>
+
+                            <div id="holiday-paid-details" class="grid grid-cols-2 gap-3 ${currentType === 'holiday_paid' ? '' : 'hidden'}">
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Horas por Operario:</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" id="input-holiday-hours" value="${dayStatus.hoursPerWorker || 8}" min="1" max="24" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500 font-mono text-center">
+                                        <span class="text-slate-400 text-[11px]">hs</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Costo Cuadrilla (USD):</label>
+                                    <input type="number" id="input-holiday-cost" value="${dayStatus.customCost !== null && dayStatus.customCost !== undefined ? dayStatus.customCost : autoCost}" placeholder="Auto: $${autoCost}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500 font-mono text-right">
+                                </div>
+                            </div>
+                            <p class="text-[10px] text-slate-400">
+                                * El costo automático estimado de la cuadrilla activa (${crewSize} operarios) es de <strong class="text-emerald-400 font-mono">$${autoCost.toLocaleString()} USD</strong> por jornada. Puedes ingresar un monto manual si pactaste otra tarifa.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Botones de Acción -->
+                    <div class="p-4 bg-slate-800/80 border-t border-slate-700/80 flex items-center justify-between flex-shrink-0">
+                        <div>
+                            ${isCustomConfigured ? `
+                                <button type="button" id="btn-reset-day" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 hover:text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1 transition-colors">
+                                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Restablecer a Default
+                                </button>
+                            ` : `
+                                <span class="text-[11px] text-slate-500">Configuración estándar de calendario</span>
+                            `}
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" class="btn-close-modal px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors">
+                                Cancelar
+                            </button>
+                            <button type="button" id="btn-save-day-calendar" class="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 flex items-center gap-1.5 transition-colors">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i> Guardar Día
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        // Listeners de cierre
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        // Dinámica de visibilidad de opciones
+        const extraConfigEl = this.modalRoot.querySelector('#holiday-extra-config');
+        const paidDetailsEl = this.modalRoot.querySelector('#holiday-paid-details');
+        const radioInputs = this.modalRoot.querySelectorAll('input[name="day_calendar_type"]');
+
+        radioInputs.forEach(radio => {
+            radio.addEventListener('change', () => {
+                const val = radio.value;
+                if (val === 'holiday_paid') {
+                    extraConfigEl.classList.remove('hidden');
+                    paidDetailsEl.classList.remove('hidden');
+                } else if (val === 'holiday_unpaid') {
+                    extraConfigEl.classList.remove('hidden');
+                    paidDetailsEl.classList.add('hidden');
+                } else {
+                    extraConfigEl.classList.add('hidden');
+                    paidDetailsEl.classList.add('hidden');
+                }
+            });
+        });
+
+        // Guardar
+        const btnSave = this.modalRoot.querySelector('#btn-save-day-calendar');
+        if (btnSave) {
+            btnSave.addEventListener('click', () => {
+                const selectedRadio = this.modalRoot.querySelector('input[name="day_calendar_type"]:checked');
+                const type = selectedRadio ? selectedRadio.value : 'workday';
+                const nameInput = this.modalRoot.querySelector('#input-holiday-name');
+                const hoursInput = this.modalRoot.querySelector('#input-holiday-hours');
+                const costInput = this.modalRoot.querySelector('#input-holiday-cost');
+
+                const name = nameInput ? nameInput.value.trim() : '';
+                const hoursPerWorker = hoursInput ? Number(hoursInput.value) || 8 : 8;
+                const rawCost = costInput ? costInput.value.trim() : '';
+                const customCost = rawCost !== '' ? Number(rawCost) : null;
+
+                this.store.setDayStatus(dateStr, {
+                    type,
+                    name,
+                    hoursPerWorker,
+                    customCost
+                });
+
+                const desc = type === 'holiday_paid' ? 'feriado pago' : (type === 'weekend' ? 'fin de semana' : (type === 'holiday_unpaid' ? 'parada no laborable' : 'jornada laborable'));
+                this.showToast(`Día ${dateStr} configurado como ${desc}`);
+                this.closeModal();
+            });
+        }
+
+        // Restablecer a default
+        const btnReset = this.modalRoot.querySelector('#btn-reset-day');
+        if (btnReset) {
+            btnReset.addEventListener('click', () => {
+                this.store.setDayStatus(dateStr, { type: 'reset' });
+                this.showToast(`Día ${dateStr} restablecido a la configuración general.`);
+                this.closeModal();
+            });
+        }
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ======================================================================
     // 4. MODAL: IMPORTADOR DE PRESUPUESTOS Y LISTAS DE TAREAS
     // ======================================================================
     openImportModal() {
@@ -3432,10 +3658,14 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <!-- Celdas de guía de días de fondo -->
                         <div class="absolute inset-0 flex pointer-events-none">
                             ${calendarDates.map((dateStr) => {
-                                const dObj = new Date(dateStr + 'T12:00:00');
-                                const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                const dayStatus = this.store.getDayStatus(dateStr, p);
+                                const isPaidHol = dayStatus.isHoliday && dayStatus.isPaid;
+                                const isWeekend = dayStatus.isWeekend;
+                                const cellBg = isPaidHol 
+                                    ? 'bg-purple-100/60 border-r border-purple-300/80' 
+                                    : (isWeekend ? 'bg-slate-100/80 border-r border-slate-200' : 'border-r border-slate-200/80');
                                 return `
-                                    <div class="h-full border-r border-slate-200/80 ${isWeekend ? 'bg-slate-50/70' : ''}" 
+                                    <div class="h-full ${cellBg}" 
                                          style="width: ${(1 / totalDays) * 100}%;"></div>
                                 `;
                             }).join('')}
@@ -3557,12 +3787,19 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                         const dObj = new Date(dateStr + 'T12:00:00');
                                         const dayLetter = daysMap[dObj.getDay()] || '';
                                         const dayNum = String(dObj.getDate()).padStart(2, '0');
-                                        const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                        const dayStatus = this.store.getDayStatus(dateStr, p);
+                                        const isPaidHol = dayStatus.isHoliday && dayStatus.isPaid;
+                                        const isWeekend = dayStatus.isWeekend;
+                                        const hdrClass = isPaidHol 
+                                            ? 'bg-purple-100 text-purple-900 font-extrabold border-r border-purple-300' 
+                                            : (isWeekend ? 'bg-slate-200/70 text-slate-500 border-r border-slate-300' : 'text-slate-800 border-r border-slate-300');
                                         return `
-                                            <div class="flex flex-col items-center justify-center py-1.5 border-r border-slate-300 text-center ${isWeekend ? 'bg-slate-200/70 text-slate-500' : 'text-slate-800'}"
-                                                 style="width: ${(1 / totalDays) * 100}%;">
-                                                <span class="text-[8px] uppercase leading-none font-bold">${dayLetter}</span>
-                                                <span class="text-[10px] font-black font-mono leading-tight">${dayNum}</span>
+                                            <div class="flex flex-col items-center justify-center py-1 text-center ${hdrClass}"
+                                                 style="width: ${(1 / totalDays) * 100}%;"
+                                                 title="${dayStatus.name}">
+                                                <span class="text-[7.5px] uppercase leading-none font-bold">${dayLetter}</span>
+                                                <span class="text-[9.5px] font-black font-mono leading-tight">${dayNum}</span>
+                                                ${isPaidHol ? `<span class="text-[6.5px] font-black text-purple-800 leading-none">FER</span>` : ''}
                                             </div>
                                         `;
                                     }).join('')}
@@ -3584,6 +3821,12 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <div class="flex justify-between items-center pt-2 text-[10px] text-slate-500 flex-wrap gap-2 border-t border-slate-200">
                             <div class="flex items-center gap-3">
                                 <span class="font-bold text-slate-700">Referencias:</span>
+                                <span class="flex items-center gap-1 font-medium text-slate-600">
+                                    <span class="w-2.5 h-2.5 rounded inline-block bg-slate-200 border border-slate-400"></span> Fin Sem
+                                </span>
+                                <span class="flex items-center gap-1 font-semibold text-purple-800">
+                                    <span class="w-2.5 h-2.5 rounded inline-block bg-purple-200 border border-purple-400"></span> Feriado Pago ($)
+                                </span>
                                 ${reportType === 'estimated' ? `
                                     <div class="flex items-center flex-wrap gap-2.5">
                                         <span class="font-bold text-slate-800">Disciplinas:</span>

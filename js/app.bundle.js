@@ -57,6 +57,17 @@ const INITIAL_PROJECTS = [
             motosoldadora: 3,
             bomba_hidro: 1
         },
+        calendarConfig: {
+            workWeek: [1, 2, 3, 4, 5],
+            holidays: {
+                '2026-09-11': {
+                    name: 'Feriado Provincial / Asueto Petrolero',
+                    isWorking: false,
+                    isPaid: true,
+                    hoursPerWorker: 8
+                }
+            }
+        },
         tasks: [
             {
                 id: 'TSK-101',
@@ -1056,6 +1067,170 @@ class ProjectStore {
         return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
     }
 
+    /**
+     * Obtiene el estado laboral de una fecha en el calendario del proyecto:
+     * - 'workday': Jornada normal de trabajo
+     * - 'weekend': Fin de semana estándar (Sábado/Domingo según workWeek)
+     * - 'holiday_paid': Feriado / asueto pago (no laborable pero devenga costo sobre presupuesto)
+     * - 'holiday_unpaid': Parada de obra sin liquidación salarial
+     */
+    getDayStatus(dateStr, project = this.getActiveProject()) {
+        if (!dateStr || !project) {
+            return { type: 'workday', isWorking: true, isWeekend: false, isHoliday: false, isPaid: false, name: 'Día Laborable', cost: 0 };
+        }
+
+        const calConfig = project.calendarConfig || {};
+        const workWeek = calConfig.workWeek || [1, 2, 3, 4, 5]; // Lun-Vie por defecto
+        const holidays = calConfig.holidays || {};
+
+        // 1. Configuración explícita para la fecha
+        if (holidays[dateStr]) {
+            const h = holidays[dateStr];
+            const isPaid = Boolean(h.isPaid);
+            const isWorking = Boolean(h.isWorking);
+            const cost = isPaid ? this.getHolidayDailyCost(dateStr, project) : 0;
+            return {
+                type: isWorking ? 'workday' : (isPaid ? 'holiday_paid' : 'holiday_unpaid'),
+                isWorking,
+                isWeekend: false,
+                isHoliday: true,
+                isPaid,
+                name: h.name || (isPaid ? 'Feriado Pago' : 'Día No Laborable'),
+                hoursPerWorker: h.hoursPerWorker || 8,
+                customCost: h.customCost !== undefined ? h.customCost : null,
+                cost
+            };
+        }
+
+        // 2. Determinar si es fin de semana según workWeek
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dayOfWeek = new Date(y, m - 1, d, 12, 0, 0).getDay();
+        const isWorking = workWeek.includes(dayOfWeek);
+
+        if (!isWorking) {
+            const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            return {
+                type: 'weekend',
+                isWorking: false,
+                isWeekend: true,
+                isHoliday: false,
+                isPaid: false,
+                name: `${dayNames[dayOfWeek]} (No Laborable)`,
+                cost: 0
+            };
+        }
+
+        return {
+            type: 'workday',
+            isWorking: true,
+            isWeekend: false,
+            isHoliday: false,
+            isPaid: false,
+            name: 'Jornada Laborable Normal',
+            cost: 0
+        };
+    }
+
+    /**
+     * Calcula el costo presupuestario de una jornada de feriado pago
+     */
+    getHolidayDailyCost(dateStr, project = this.getActiveProject()) {
+        if (!project) return 0;
+        const calConfig = project.calendarConfig || {};
+        const holidays = calConfig.holidays || {};
+        const h = holidays[dateStr];
+        if (!h || !h.isPaid) return 0;
+
+        // Si el usuario fijó un monto manual personalizado
+        if (h.customCost !== null && h.customCost !== undefined && !isNaN(Number(h.customCost))) {
+            return Math.round(Number(h.customCost));
+        }
+
+        // Calcular en base a la dotación de mano de obra del proyecto
+        const hoursPerWorker = Number(h.hoursPerWorker) || 8;
+        const catalogs = this.getCatalogs();
+        const laborCatalog = catalogs.labor || [];
+
+        let totalLaborCost = 0;
+        const limits = project.resourceLimits || {};
+
+        laborCatalog.forEach(res => {
+            const qty = Number(limits[res.id]) || 0;
+            if (qty > 0) {
+                const rate = Number(res.hourlyRate) || 25;
+                totalLaborCost += qty * hoursPerWorker * rate;
+            }
+        });
+
+        // Si no hay límites de dotación cargados, estimar en base a las cuadrillas de tareas
+        if (totalLaborCost === 0 && project.tasks && project.tasks.length > 0) {
+            const avgLaborMap = {};
+            project.tasks.forEach(t => {
+                if (t.labor) {
+                    const dur = Math.max(1, t.durationDays || 1);
+                    Object.entries(t.labor).forEach(([rId, hrs]) => {
+                        avgLaborMap[rId] = Math.max(avgLaborMap[rId] || 0, (parseFloat(hrs) || 0) / dur);
+                    });
+                }
+            });
+            Object.entries(avgLaborMap).forEach(([rId, avgPerDay]) => {
+                const meta = getResourceMeta(rId, catalogs);
+                totalLaborCost += avgPerDay * (meta.hourlyRate || 25);
+            });
+        }
+
+        return Math.round(totalLaborCost || 1200);
+    }
+
+    /**
+     * Configura el estado de una fecha (laborable, fin de semana, feriado pago o parada sin costo)
+     */
+    setDayStatus(dateStr, statusData, project = this.getActiveProject()) {
+        if (this.state.isSupervisionMode || !project || !dateStr) return false;
+
+        if (!project.calendarConfig) {
+            project.calendarConfig = { workWeek: [1, 2, 3, 4, 5], holidays: {} };
+        }
+        if (!project.calendarConfig.holidays) {
+            project.calendarConfig.holidays = {};
+        }
+
+        if (!statusData || statusData.type === 'reset' || statusData.type === 'default') {
+            delete project.calendarConfig.holidays[dateStr];
+        } else if (statusData.type === 'workday') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Jornada Laborable Habilitada',
+                isWorking: true,
+                isPaid: false
+            };
+        } else if (statusData.type === 'weekend') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Día No Laborable (Sin Costo)',
+                isWorking: false,
+                isPaid: false
+            };
+        } else if (statusData.type === 'holiday_paid') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Feriado Pago / Asueto',
+                isWorking: false,
+                isPaid: true,
+                hoursPerWorker: Number(statusData.hoursPerWorker) || 8,
+                customCost: statusData.customCost !== undefined && statusData.customCost !== null && statusData.customCost !== '' 
+                    ? Number(statusData.customCost) 
+                    : null
+            };
+        } else if (statusData.type === 'holiday_unpaid') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Parada No Laborable (Sin Costo)',
+                isWorking: false,
+                isPaid: false
+            };
+        }
+
+        this.notify();
+        return true;
+    }
+
     // Cálculo exhaustivo de KPIs (HH, Costo, Avance Ponderado, EVM)
     getProjectKPIs() {
         const project = this.getActiveProject();
@@ -1082,7 +1257,7 @@ class ProjectStore {
                     const h = parseFloat(hh) || 0;
                     taskEstHH += h;
                     const meta = getResourceMeta(resId, catalogs);
-                    totalEstimatedCost += h * (meta.hourlyRate || 30);
+                    totalEstimatedCost += h * (meta.hourlyRate || 25);
                 });
             }
             totalEstimatedHH += taskEstHH;
@@ -1095,7 +1270,7 @@ class ProjectStore {
                     const h = parseFloat(hh) || 0;
                     taskRealHH += h;
                     const meta = getResourceMeta(resId, catalogs);
-                    totalRealCost += h * (meta.hourlyRate || 30);
+                    totalRealCost += h * (meta.hourlyRate || 25);
                 });
             }
             totalRealHH += taskRealHH;
@@ -1191,9 +1366,36 @@ class ProjectStore {
         // Conteo de conflictos activos
         const conflicts = this.getConflicts();
 
+        // 3. Costos de Feriados Pagos en el calendario de la obra
+        const startDateStr = project.startDate || '2026-09-01';
+        const timelineDays = project.durationDays || 28;
+        const endDateStr = calculateEndDate(startDateStr, timelineDays);
+        const calendarDates = getDatesRange(startDateStr, endDateStr);
+
+        let totalHolidayCost = 0;
+        let paidHolidaysCount = 0;
+        let weekendDaysCount = 0;
+        let nonWorkingDaysCount = 0;
+
+        calendarDates.forEach(dStr => {
+            const status = this.getDayStatus(dStr, project);
+            if (!status.isWorking) {
+                nonWorkingDaysCount++;
+                if (status.isWeekend) weekendDaysCount++;
+            }
+            if (status.isHoliday && status.isPaid) {
+                paidHolidaysCount++;
+                totalHolidayCost += status.cost || 0;
+            }
+        });
+
+        // Sumar costo de feriados al presupuesto estimado y real
+        const finalEstimatedProjectCost = totalEstimatedProjectCost + totalHolidayCost;
+        const finalRealProjectCost = totalRealProjectCost + totalHolidayCost;
+
         // Monto contractual cotizado (Venta) vs Costo Proyectado
-        const contractBudget = project.contractBudget || Math.round(totalEstimatedProjectCost * 1.28);
-        const projectedGrossMargin = contractBudget - totalRealProjectCost;
+        const contractBudget = project.contractBudget || Math.round(finalEstimatedProjectCost * 1.28);
+        const projectedGrossMargin = contractBudget - finalRealProjectCost;
         const projectedGrossMarginPct = contractBudget > 0 ? Math.round((projectedGrossMargin / contractBudget) * 100) : 0;
 
         return {
@@ -1201,9 +1403,9 @@ class ProjectStore {
             totalRealHH: Math.round(totalRealHH),
             hhDeviation: Math.round(totalRealHH - totalEstimatedHH),
             globalProgress,
-            totalEstimatedCost: Math.round(totalEstimatedProjectCost),
-            totalRealCost: Math.round(totalRealProjectCost),
-            costDeviation: Math.round(totalRealProjectCost - totalEstimatedProjectCost),
+            totalEstimatedCost: Math.round(finalEstimatedProjectCost),
+            totalRealCost: Math.round(finalRealProjectCost),
+            costDeviation: Math.round(finalRealProjectCost - finalEstimatedProjectCost),
             contractBudget: Math.round(contractBudget),
             projectedGrossMargin: Math.round(projectedGrossMargin),
             projectedGrossMarginPct,
@@ -1212,7 +1414,12 @@ class ProjectStore {
             spi: parseFloat(spi),
             activeConflicts: conflicts.totalConflictsCount,
             totalTasksCount: tasks.length + (project.backlog ? project.backlog.length : 0),
-            backlogCount: project.backlog ? project.backlog.length : 0
+            backlogCount: project.backlog ? project.backlog.length : 0,
+            // Métricas de calendario y feriados
+            totalHolidayCost: Math.round(totalHolidayCost),
+            paidHolidaysCount,
+            weekendDaysCount,
+            nonWorkingDaysCount
         };
     }
 
@@ -2473,31 +2680,59 @@ class TimelineRenderer {
             const isToday = dateStr === this.todayStr;
             const hasConflict = conflicts.conflictsByDate && conflicts.conflictsByDate[dateStr] && conflicts.conflictsByDate[dateStr].length > 0;
             const conflictInfo = hasConflict ? conflicts.conflictsByDate[dateStr] : null;
+            const dayStatus = this.store.getDayStatus(dateStr);
+
+            let dayBgClass = 'hover:bg-slate-800/50 cursor-pointer';
+            let dayTextClass = 'text-slate-400';
+            let numBgClass = 'text-slate-200';
+            let tagBadge = '';
+
+            if (dayStatus.isHoliday && dayStatus.isPaid) {
+                dayBgClass = 'timeline-day-holiday-paid cursor-pointer';
+                dayTextClass = 'text-purple-300 font-extrabold';
+                numBgClass = 'bg-purple-600 text-white shadow-sm shadow-purple-500/30';
+                tagBadge = `<span class="px-1 py-0.2 rounded text-[8px] font-black bg-purple-500/30 text-purple-200 border border-purple-400/50 truncate max-w-[90%]" title="${dayStatus.name} - Costo cuadrilla: $${Math.round(dayStatus.cost || 0)}">Feriado $</span>`;
+            } else if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                dayBgClass = 'timeline-day-holiday-unpaid cursor-pointer';
+                dayTextClass = 'text-rose-300 font-bold';
+                numBgClass = 'bg-rose-700 text-white';
+                tagBadge = `<span class="px-1 py-0.2 rounded text-[8px] font-bold bg-rose-500/20 text-rose-200 border border-rose-500/30 truncate max-w-[90%]" title="${dayStatus.name}">Parada</span>`;
+            } else if (dayStatus.isWeekend) {
+                dayBgClass = 'timeline-day-weekend cursor-pointer opacity-80';
+                dayTextClass = 'text-slate-500';
+                numBgClass = 'text-slate-400';
+                tagBadge = `<span class="text-[8px] font-bold text-slate-500 uppercase tracking-tighter">Fin Sem</span>`;
+            } else if (isToday) {
+                dayBgClass = 'bg-amber-500/10 border-amber-500/40 cursor-pointer';
+                dayTextClass = 'text-amber-400 font-bold';
+                numBgClass = 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20';
+            }
 
             headerColsHtml += `
-                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-1.5 border-r border-slate-700/60 transition-colors select-none ${isToday ? 'bg-amber-500/10 border-amber-500/40' : 'hover:bg-slate-800/40'}"
+                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-1.5 border-r border-slate-700/60 transition-colors select-none ${dayBgClass}"
                      style="width: ${this.columnWidth}px;"
-                     data-date="${dateStr}">
+                     data-date="${dateStr}"
+                     title="Día: ${dayStatus.name}. Haz clic para configurar día laborable, fin de semana o feriado pago.">
                     
-                    <span class="${isVeryCompact ? 'text-[8px]' : 'text-[10px]'} uppercase font-bold tracking-wider ${isToday ? 'text-amber-400' : 'text-slate-400'}">
+                    <span class="${isVeryCompact ? 'text-[8px]' : 'text-[10px]'} uppercase font-bold tracking-wider ${dayTextClass}">
                         ${isVeryCompact ? dayName.slice(0, 1) : dayName}
                     </span>
                     
-                    <div class="my-0.5 flex items-center justify-center ${isVeryCompact ? 'w-5 h-5 text-[10px]' : (isCompact ? 'w-6 h-6 text-xs' : 'w-7 h-7 text-xs')} rounded-full font-black ${isToday ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20' : 'text-slate-200'}">
+                    <div class="my-0.5 flex items-center justify-center ${isVeryCompact ? 'w-5 h-5 text-[10px]' : (isCompact ? 'w-6 h-6 text-xs' : 'w-7 h-7 text-xs')} rounded-full font-black ${numBgClass}">
                         ${dayNum}
                     </div>
 
                     ${isVeryCompact ? '' : `<span class="text-[9px] text-slate-400 font-medium truncate">${monthName}</span>`}
 
                     ${hasConflict ? `
-                        <button class="btn-inspect-conflict mt-0.5 px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-0.5 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse"
+                        <button class="btn-inspect-conflict mt-0.5 px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-0.5 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse z-10"
                                 title="Sobreasignación de recursos en esta fecha. Clic para inspeccionar."
                                 data-date="${dateStr}">
                             <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> ${isVeryCompact ? '' : conflictInfo.length}
                         </button>
-                    ` : `
+                    ` : (tagBadge ? tagBadge : `
                         <span class="text-[9px] text-transparent select-none mt-0.5">•</span>
-                    `}
+                    `)}
                 </div>
             `;
         });
@@ -2548,6 +2783,17 @@ class TimelineRenderer {
                 e.stopPropagation();
                 const date = btn.dataset.date;
                 if (window.appModals) window.appModals.openConflictInspector(date);
+            });
+        });
+
+        // 5b. Clic en cabecera de día para configurar feriados / días no laborables
+        this.container.querySelectorAll('.timeline-day-header').forEach(hdr => {
+            hdr.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-inspect-conflict')) return;
+                const date = hdr.dataset.date;
+                if (window.appModals && typeof window.appModals.openDayCalendarModal === 'function') {
+                    window.appModals.openDayCalendarModal(date);
+                }
             });
         });
 
@@ -2660,11 +2906,22 @@ class TimelineRenderer {
 
                 <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
                 <div class="absolute inset-y-0 right-0 flex" style="left: ${rowHandleWidth}px;">
-                    ${calendarDates.map(d => `
-                        <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
-                             style="width: ${this.columnWidth}px;" 
-                             data-date="${d}"></div>
-                    `).join('')}
+                    ${calendarDates.map(d => {
+                        const dayStatus = this.store.getDayStatus(d);
+                        let cellClass = '';
+                        if (dayStatus.isHoliday && dayStatus.isPaid) {
+                            cellClass = 'timeline-cell-holiday-paid';
+                        } else if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                            cellClass = 'timeline-cell-holiday-unpaid';
+                        } else if (dayStatus.isWeekend) {
+                            cellClass = 'timeline-cell-weekend';
+                        }
+                        return `
+                            <div class="timeline-grid-cell ${cellClass} border-r border-slate-800/60 h-full transition-colors" 
+                                 style="width: ${this.columnWidth}px;" 
+                                 data-date="${d}"></div>
+                        `;
+                    }).join('')}
                 </div>
 
                 ${isPlaced ? `
@@ -4163,6 +4420,232 @@ class ModalManager {
                 }
             });
         });
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ======================================================================
+    // 3b. MODAL: CONFIGURACIÓN DE DÍA (LABORABLE, FIN DE SEMANA, FERIADO PAGO)
+    // ======================================================================
+    openDayCalendarModal(dateStr) {
+        if (!dateStr) return;
+        const project = this.store.getActiveProject();
+        if (!project) return;
+        
+        if (this.store.state.isSupervisionMode) {
+            this.showToast('El calendario laboral es de solo lectura en modo supervisión.');
+            return;
+        }
+
+        const dayStatus = this.store.getDayStatus(dateStr, project);
+        const autoCost = this.store.getHolidayDailyCost(dateStr, project);
+
+        // Formatear fecha amigable en español
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dateObj = new Date(y, m - 1, d, 12, 0, 0);
+        const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        const formattedDate = `${dayNames[dateObj.getDay()]}, ${d} de ${monthNames[m - 1]} de ${y}`;
+
+        const isCustomConfigured = Boolean(project.calendarConfig && project.calendarConfig.holidays && project.calendarConfig.holidays[dateStr]);
+        const currentType = dayStatus.type; // 'workday' | 'weekend' | 'holiday_paid' | 'holiday_unpaid'
+
+        const crewSize = project.resourceLimits ? Object.values(project.resourceLimits).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+
+        const html = `
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
+                <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    
+                    <!-- Cabecera del Modal -->
+                    <div class="p-4 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between flex-shrink-0">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                                <i data-lucide="calendar" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-bold text-white">Configuración del Calendario Laboral</h3>
+                                <p class="text-[11px] text-slate-400 font-mono">${formattedDate} • (${dateStr})</p>
+                            </div>
+                        </div>
+                        <button class="btn-close-modal text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- Contenido y Opciones -->
+                    <div class="p-5 space-y-4 overflow-y-auto custom-scrollbar text-xs">
+                        <div>
+                            <label class="block text-slate-300 font-semibold mb-2">Clasificación para esta Fecha:</label>
+                            
+                            <div class="space-y-2">
+                                <!-- 1. Jornada Laborable Normal -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="workday" ${currentType === 'workday' ? 'checked' : ''} class="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-200">🟢 Jornada Laborable Normal</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Día Hábil</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Se planifican y ejecutan tareas productivas en obra. Costo imputado según horas ejecutadas.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 2. Fin de Semana / Franco Habitual (Sin Costo) -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="weekend" ${currentType === 'weekend' ? 'checked' : ''} class="mt-0.5 text-slate-400 focus:ring-slate-400 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-300">⚪ Fin de Semana / Franco Habitual</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700/50 text-slate-300 border border-slate-600/40">Sin Costo</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Día de descanso semanal estándar (Sábados/Domingos). No devenga jornales cargados al presupuesto.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 3. Feriado / Asueto Pago (CON Costo sobre Presupuesto) -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border-2 ${currentType === 'holiday_paid' ? 'border-purple-500/80 bg-purple-950/20' : 'border-purple-500/40 bg-purple-950/10'} hover:bg-purple-950/30 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="holiday_paid" ${currentType === 'holiday_paid' ? 'checked' : ''} class="mt-0.5 text-purple-500 focus:ring-purple-500 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-purple-200">🟣 Feriado / Asueto Pago</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">Afecta Presupuesto ($)</span>
+                                        </div>
+                                        <p class="text-[11px] text-purple-300/80 mt-0.5">No hay tareas físicas, pero se liquida el jornal del personal asignado y se carga como costo directo de obra.</p>
+                                    </div>
+                                </label>
+
+                                <!-- 4. Parada No Laborable Sin Costo -->
+                                <label class="flex items-start gap-3 p-3 rounded-xl border border-slate-700/70 bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer transition-all">
+                                    <input type="radio" name="day_calendar_type" value="holiday_unpaid" ${currentType === 'holiday_unpaid' ? 'checked' : ''} class="mt-0.5 text-rose-400 focus:ring-rose-400 bg-slate-900 border-slate-700">
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-slate-300">🔴 Parada No Laborable Sin Costo</span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">Sin Jornal</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">Día inhábil sin liquidación de haberes (ej. veda climática o suspensión sin goce acordada).</p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Sección de Parámetros de Feriado / Parada -->
+                        <div id="holiday-extra-config" class="space-y-3 p-3.5 bg-slate-950/60 rounded-xl border border-purple-500/30 transition-all ${currentType === 'holiday_paid' || currentType === 'holiday_unpaid' ? '' : 'hidden'}">
+                            <div class="text-[11px] font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <i data-lucide="info" class="w-3.5 h-3.5"></i> Parámetros de Liquidación y Costos
+                            </div>
+                            
+                            <div>
+                                <label class="block text-slate-300 font-semibold mb-1">Nombre / Motivo:</label>
+                                <input type="text" id="input-holiday-name" value="${dayStatus.name || ''}" placeholder="Ej: Feriado Nacional, Asueto Petrolero, etc." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500">
+                            </div>
+
+                            <div id="holiday-paid-details" class="grid grid-cols-2 gap-3 ${currentType === 'holiday_paid' ? '' : 'hidden'}">
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Horas por Operario:</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" id="input-holiday-hours" value="${dayStatus.hoursPerWorker || 8}" min="1" max="24" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500 font-mono text-center">
+                                        <span class="text-slate-400 text-[11px]">hs</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-slate-300 font-semibold mb-1">Costo Cuadrilla (USD):</label>
+                                    <input type="number" id="input-holiday-cost" value="${dayStatus.customCost !== null && dayStatus.customCost !== undefined ? dayStatus.customCost : autoCost}" placeholder="Auto: $${autoCost}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:ring-1 focus:ring-purple-500 font-mono text-right">
+                                </div>
+                            </div>
+                            <p class="text-[10px] text-slate-400">
+                                * El costo automático estimado de la cuadrilla activa (${crewSize} operarios) es de <strong class="text-emerald-400 font-mono">$${autoCost.toLocaleString()} USD</strong> por jornada. Puedes ingresar un monto manual si pactaste otra tarifa.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Botones de Acción -->
+                    <div class="p-4 bg-slate-800/80 border-t border-slate-700/80 flex items-center justify-between flex-shrink-0">
+                        <div>
+                            ${isCustomConfigured ? `
+                                <button type="button" id="btn-reset-day" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 hover:text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1 transition-colors">
+                                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Restablecer a Default
+                                </button>
+                            ` : `
+                                <span class="text-[11px] text-slate-500">Configuración estándar de calendario</span>
+                            `}
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" class="btn-close-modal px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors">
+                                Cancelar
+                            </button>
+                            <button type="button" id="btn-save-day-calendar" class="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 flex items-center gap-1.5 transition-colors">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i> Guardar Día
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        `;
+
+        this.modalRoot.innerHTML = html;
+
+        // Listeners de cierre
+        this.modalRoot.querySelectorAll('.btn-close-modal').forEach(b => b.addEventListener('click', () => this.closeModal()));
+
+        // Dinámica de visibilidad de opciones
+        const extraConfigEl = this.modalRoot.querySelector('#holiday-extra-config');
+        const paidDetailsEl = this.modalRoot.querySelector('#holiday-paid-details');
+        const radioInputs = this.modalRoot.querySelectorAll('input[name="day_calendar_type"]');
+
+        radioInputs.forEach(radio => {
+            radio.addEventListener('change', () => {
+                const val = radio.value;
+                if (val === 'holiday_paid') {
+                    extraConfigEl.classList.remove('hidden');
+                    paidDetailsEl.classList.remove('hidden');
+                } else if (val === 'holiday_unpaid') {
+                    extraConfigEl.classList.remove('hidden');
+                    paidDetailsEl.classList.add('hidden');
+                } else {
+                    extraConfigEl.classList.add('hidden');
+                    paidDetailsEl.classList.add('hidden');
+                }
+            });
+        });
+
+        // Guardar
+        const btnSave = this.modalRoot.querySelector('#btn-save-day-calendar');
+        if (btnSave) {
+            btnSave.addEventListener('click', () => {
+                const selectedRadio = this.modalRoot.querySelector('input[name="day_calendar_type"]:checked');
+                const type = selectedRadio ? selectedRadio.value : 'workday';
+                const nameInput = this.modalRoot.querySelector('#input-holiday-name');
+                const hoursInput = this.modalRoot.querySelector('#input-holiday-hours');
+                const costInput = this.modalRoot.querySelector('#input-holiday-cost');
+
+                const name = nameInput ? nameInput.value.trim() : '';
+                const hoursPerWorker = hoursInput ? Number(hoursInput.value) || 8 : 8;
+                const rawCost = costInput ? costInput.value.trim() : '';
+                const customCost = rawCost !== '' ? Number(rawCost) : null;
+
+                this.store.setDayStatus(dateStr, {
+                    type,
+                    name,
+                    hoursPerWorker,
+                    customCost
+                });
+
+                const desc = type === 'holiday_paid' ? 'feriado pago' : (type === 'weekend' ? 'fin de semana' : (type === 'holiday_unpaid' ? 'parada no laborable' : 'jornada laborable'));
+                this.showToast(`Día ${dateStr} configurado como ${desc}`);
+                this.closeModal();
+            });
+        }
+
+        // Restablecer a default
+        const btnReset = this.modalRoot.querySelector('#btn-reset-day');
+        if (btnReset) {
+            btnReset.addEventListener('click', () => {
+                this.store.setDayStatus(dateStr, { type: 'reset' });
+                this.showToast(`Día ${dateStr} restablecido a la configuración general.`);
+                this.closeModal();
+            });
+        }
 
         if (window.lucide) window.lucide.createIcons();
     }
@@ -6342,10 +6825,14 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <!-- Celdas de guía de días de fondo -->
                         <div class="absolute inset-0 flex pointer-events-none">
                             ${calendarDates.map((dateStr) => {
-                                const dObj = new Date(dateStr + 'T12:00:00');
-                                const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                const dayStatus = this.store.getDayStatus(dateStr, p);
+                                const isPaidHol = dayStatus.isHoliday && dayStatus.isPaid;
+                                const isWeekend = dayStatus.isWeekend;
+                                const cellBg = isPaidHol 
+                                    ? 'bg-purple-100/60 border-r border-purple-300/80' 
+                                    : (isWeekend ? 'bg-slate-100/80 border-r border-slate-200' : 'border-r border-slate-200/80');
                                 return `
-                                    <div class="h-full border-r border-slate-200/80 ${isWeekend ? 'bg-slate-50/70' : ''}" 
+                                    <div class="h-full ${cellBg}" 
                                          style="width: ${(1 / totalDays) * 100}%;"></div>
                                 `;
                             }).join('')}
@@ -6467,12 +6954,19 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                                         const dObj = new Date(dateStr + 'T12:00:00');
                                         const dayLetter = daysMap[dObj.getDay()] || '';
                                         const dayNum = String(dObj.getDate()).padStart(2, '0');
-                                        const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6;
+                                        const dayStatus = this.store.getDayStatus(dateStr, p);
+                                        const isPaidHol = dayStatus.isHoliday && dayStatus.isPaid;
+                                        const isWeekend = dayStatus.isWeekend;
+                                        const hdrClass = isPaidHol 
+                                            ? 'bg-purple-100 text-purple-900 font-extrabold border-r border-purple-300' 
+                                            : (isWeekend ? 'bg-slate-200/70 text-slate-500 border-r border-slate-300' : 'text-slate-800 border-r border-slate-300');
                                         return `
-                                            <div class="flex flex-col items-center justify-center py-1.5 border-r border-slate-300 text-center ${isWeekend ? 'bg-slate-200/70 text-slate-500' : 'text-slate-800'}"
-                                                 style="width: ${(1 / totalDays) * 100}%;">
-                                                <span class="text-[8px] uppercase leading-none font-bold">${dayLetter}</span>
-                                                <span class="text-[10px] font-black font-mono leading-tight">${dayNum}</span>
+                                            <div class="flex flex-col items-center justify-center py-1 text-center ${hdrClass}"
+                                                 style="width: ${(1 / totalDays) * 100}%;"
+                                                 title="${dayStatus.name}">
+                                                <span class="text-[7.5px] uppercase leading-none font-bold">${dayLetter}</span>
+                                                <span class="text-[9.5px] font-black font-mono leading-tight">${dayNum}</span>
+                                                ${isPaidHol ? `<span class="text-[6.5px] font-black text-purple-800 leading-none">FER</span>` : ''}
                                             </div>
                                         `;
                                     }).join('')}
@@ -6494,6 +6988,12 @@ Izaje de Aeroenfriador 30 Ton	Equipos	3 días" class="w-full bg-slate-800/90 bor
                         <div class="flex justify-between items-center pt-2 text-[10px] text-slate-500 flex-wrap gap-2 border-t border-slate-200">
                             <div class="flex items-center gap-3">
                                 <span class="font-bold text-slate-700">Referencias:</span>
+                                <span class="flex items-center gap-1 font-medium text-slate-600">
+                                    <span class="w-2.5 h-2.5 rounded inline-block bg-slate-200 border border-slate-400"></span> Fin Sem
+                                </span>
+                                <span class="flex items-center gap-1 font-semibold text-purple-800">
+                                    <span class="w-2.5 h-2.5 rounded inline-block bg-purple-200 border border-purple-400"></span> Feriado Pago ($)
+                                </span>
                                 ${reportType === 'estimated' ? `
                                     <div class="flex items-center flex-wrap gap-2.5">
                                         <span class="font-bold text-slate-800">Disciplinas:</span>
@@ -7151,29 +7651,47 @@ class AppController {
 
         // Banner descriptivo según la pestaña activa
         const bannerEl = document.getElementById('tab-context-banner');
+        const calendarLegendHtml = `
+            <div class="flex items-center gap-3 text-[11px] text-slate-400 bg-slate-950/60 px-3 py-1 rounded-xl border border-slate-800 flex-wrap">
+                <span class="text-slate-500 font-bold uppercase tracking-wider text-[10px]">Calendario:</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Laborable</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-500"></span> Fin Sem</span>
+                <span class="flex items-center gap-1.5 font-bold text-purple-300" title="Haz clic sobre cualquier fecha en la cabecera para configurar feriado o fin de semana"><span class="w-2 h-2 rounded-full bg-purple-500 shadow-xs shadow-purple-500/50"></span> Feriado Pago ($)</span>
+                <span class="text-[10px] text-slate-500 italic hidden lg:inline">(Clic en cabecera de día para configurar)</span>
+            </div>
+        `;
+
         if (bannerEl) {
+            let tabInfoHtml = '';
             if (activeTab === 'estimated') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="calendar" class="w-4 h-4 text-blue-400"></i>
                         <span><strong>Pestaña 1: Estimado (Cronograma Base)</strong> — Calendario contractual oficial y tareas programadas en base a lo cotizado.</span>
                     </div>
                 `;
             } else if (activeTab === 'real') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
                         <span><strong>Pestaña 2: Real (Ejecución en Terreno)</strong> — Monitoreo efectivo de obra. Asienta partes diarios de avance y horas en cada tarea.</span>
                     </div>
                 `;
             } else if (activeTab === 'comparativa') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="git-compare" class="w-4 h-4 text-amber-400"></i>
                         <span><strong>Pestaña 3: Comparativa / Control</strong> — Superposición de Línea de Base (arriba) vs. Avance Real (abajo). Cálculos automáticos de desviación en días y Horas-Hombre.</span>
                     </div>
                 `;
             }
+
+            bannerEl.innerHTML = `
+                <div class="flex flex-wrap items-center justify-between gap-2.5">
+                    ${tabInfoHtml}
+                    ${calendarLegendHtml}
+                </div>
+            `;
         }
     }
 
@@ -7200,7 +7718,7 @@ class AppController {
                 btnToggle.classList.add('border-cyan-500/50', 'bg-cyan-950/40', 'text-cyan-300');
                 btnToggle.classList.remove('border-slate-700', 'bg-slate-800', 'text-slate-300');
             } else {
-                btnToggle.innerHTML = `<i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> <span class="hidden sm:inline">Modo:</span> Edición`;
+                btnToggle.innerHTML = `<i data-lucide="shield" class="w-4 h-4 text-slate-400"></i> <span class="hidden sm:inline">Modo:</span> Interno`;
                 btnToggle.classList.remove('border-cyan-500/50', 'bg-cyan-950/40', 'text-cyan-300');
                 btnToggle.classList.add('border-slate-700', 'bg-slate-800', 'text-slate-300');
             }
@@ -7268,12 +7786,23 @@ class AppController {
         const costRealEl = document.getElementById('kpi-cost-real');
         const contractBudgetEl = document.getElementById('kpi-contract-budget');
         const marginBadgeEl = document.getElementById('kpi-margin-badge');
+        const holidaySubtextEl = document.getElementById('kpi-holiday-cost-subtext');
+        const holidayLabelEl = document.getElementById('kpi-holiday-cost-label');
+
         if (costRealEl) costRealEl.textContent = `$${kpis.totalRealCost.toLocaleString()}`;
         if (contractBudgetEl) contractBudgetEl.textContent = `$${kpis.contractBudget.toLocaleString()}`;
         if (marginBadgeEl) {
             const isPositive = kpis.projectedGrossMargin >= 0;
             marginBadgeEl.textContent = `Margen: ${kpis.projectedGrossMarginPct}% ($${kpis.projectedGrossMargin.toLocaleString()})`;
             marginBadgeEl.className = `text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isPositive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`;
+        }
+        if (holidaySubtextEl && holidayLabelEl) {
+            if (kpis.totalHolidayCost > 0) {
+                holidaySubtextEl.classList.remove('hidden');
+                holidayLabelEl.textContent = `Incluye $${Math.round(kpis.totalHolidayCost).toLocaleString()} en ${kpis.paidHolidaysCount} feriado(s) pago(s)`;
+            } else {
+                holidaySubtextEl.classList.add('hidden');
+            }
         }
 
         // 3B. Tareas Operativas para Modo Supervisión (Sin Costos)

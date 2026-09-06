@@ -57,6 +57,17 @@ export const INITIAL_PROJECTS = [
             motosoldadora: 3,
             bomba_hidro: 1
         },
+        calendarConfig: {
+            workWeek: [1, 2, 3, 4, 5],
+            holidays: {
+                '2026-09-11': {
+                    name: 'Feriado Provincial / Asueto Petrolero',
+                    isWorking: false,
+                    isPaid: true,
+                    hoursPerWorker: 8
+                }
+            }
+        },
         tasks: [
             {
                 id: 'TSK-101',

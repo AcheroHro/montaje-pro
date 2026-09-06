@@ -3,7 +3,7 @@
 // ==========================================================================
 
 import { INITIAL_PROJECTS, RESOURCE_CATALOG, DISCIPLINES } from './mockData.js';
-import { analyzeResourceConflicts, calculateEndDate, getResourceMeta, formatDateLocal } from './conflictEngine.js';
+import { analyzeResourceConflicts, calculateEndDate, getResourceMeta, formatDateLocal, getDatesRange } from './conflictEngine.js';
 
 const STORAGE_KEY = 'MONTAJE_PRO_STATE_V1';
 
@@ -333,6 +333,170 @@ class ProjectStore {
         return analyzeResourceConflicts(project.tasks, project.resourceLimits, this.state.currentTab === 'real' ? 'real' : 'estimated', this.getCatalogs());
     }
 
+    /**
+     * Obtiene el estado laboral de una fecha en el calendario del proyecto:
+     * - 'workday': Jornada normal de trabajo
+     * - 'weekend': Fin de semana estándar (Sábado/Domingo según workWeek)
+     * - 'holiday_paid': Feriado / asueto pago (no laborable pero devenga costo sobre presupuesto)
+     * - 'holiday_unpaid': Parada de obra sin liquidación salarial
+     */
+    getDayStatus(dateStr, project = this.getActiveProject()) {
+        if (!dateStr || !project) {
+            return { type: 'workday', isWorking: true, isWeekend: false, isHoliday: false, isPaid: false, name: 'Día Laborable', cost: 0 };
+        }
+
+        const calConfig = project.calendarConfig || {};
+        const workWeek = calConfig.workWeek || [1, 2, 3, 4, 5]; // Lun-Vie por defecto
+        const holidays = calConfig.holidays || {};
+
+        // 1. Configuración explícita para la fecha
+        if (holidays[dateStr]) {
+            const h = holidays[dateStr];
+            const isPaid = Boolean(h.isPaid);
+            const isWorking = Boolean(h.isWorking);
+            const cost = isPaid ? this.getHolidayDailyCost(dateStr, project) : 0;
+            return {
+                type: isWorking ? 'workday' : (isPaid ? 'holiday_paid' : 'holiday_unpaid'),
+                isWorking,
+                isWeekend: false,
+                isHoliday: true,
+                isPaid,
+                name: h.name || (isPaid ? 'Feriado Pago' : 'Día No Laborable'),
+                hoursPerWorker: h.hoursPerWorker || 8,
+                customCost: h.customCost !== undefined ? h.customCost : null,
+                cost
+            };
+        }
+
+        // 2. Determinar si es fin de semana según workWeek
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dayOfWeek = new Date(y, m - 1, d, 12, 0, 0).getDay();
+        const isWorking = workWeek.includes(dayOfWeek);
+
+        if (!isWorking) {
+            const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            return {
+                type: 'weekend',
+                isWorking: false,
+                isWeekend: true,
+                isHoliday: false,
+                isPaid: false,
+                name: `${dayNames[dayOfWeek]} (No Laborable)`,
+                cost: 0
+            };
+        }
+
+        return {
+            type: 'workday',
+            isWorking: true,
+            isWeekend: false,
+            isHoliday: false,
+            isPaid: false,
+            name: 'Jornada Laborable Normal',
+            cost: 0
+        };
+    }
+
+    /**
+     * Calcula el costo presupuestario de una jornada de feriado pago
+     */
+    getHolidayDailyCost(dateStr, project = this.getActiveProject()) {
+        if (!project) return 0;
+        const calConfig = project.calendarConfig || {};
+        const holidays = calConfig.holidays || {};
+        const h = holidays[dateStr];
+        if (!h || !h.isPaid) return 0;
+
+        // Si el usuario fijó un monto manual personalizado
+        if (h.customCost !== null && h.customCost !== undefined && !isNaN(Number(h.customCost))) {
+            return Math.round(Number(h.customCost));
+        }
+
+        // Calcular en base a la dotación de mano de obra del proyecto
+        const hoursPerWorker = Number(h.hoursPerWorker) || 8;
+        const catalogs = this.getCatalogs();
+        const laborCatalog = catalogs.labor || [];
+
+        let totalLaborCost = 0;
+        const limits = project.resourceLimits || {};
+
+        laborCatalog.forEach(res => {
+            const qty = Number(limits[res.id]) || 0;
+            if (qty > 0) {
+                const rate = Number(res.hourlyRate) || 25;
+                totalLaborCost += qty * hoursPerWorker * rate;
+            }
+        });
+
+        // Si no hay límites de dotación cargados, estimar en base a las cuadrillas de tareas
+        if (totalLaborCost === 0 && project.tasks && project.tasks.length > 0) {
+            const avgLaborMap = {};
+            project.tasks.forEach(t => {
+                if (t.labor) {
+                    const dur = Math.max(1, t.durationDays || 1);
+                    Object.entries(t.labor).forEach(([rId, hrs]) => {
+                        avgLaborMap[rId] = Math.max(avgLaborMap[rId] || 0, (parseFloat(hrs) || 0) / dur);
+                    });
+                }
+            });
+            Object.entries(avgLaborMap).forEach(([rId, avgPerDay]) => {
+                const meta = getResourceMeta(rId, catalogs);
+                totalLaborCost += avgPerDay * (meta.hourlyRate || 25);
+            });
+        }
+
+        return Math.round(totalLaborCost || 1200);
+    }
+
+    /**
+     * Configura el estado de una fecha (laborable, fin de semana, feriado pago o parada sin costo)
+     */
+    setDayStatus(dateStr, statusData, project = this.getActiveProject()) {
+        if (this.state.isSupervisionMode || !project || !dateStr) return false;
+
+        if (!project.calendarConfig) {
+            project.calendarConfig = { workWeek: [1, 2, 3, 4, 5], holidays: {} };
+        }
+        if (!project.calendarConfig.holidays) {
+            project.calendarConfig.holidays = {};
+        }
+
+        if (!statusData || statusData.type === 'reset' || statusData.type === 'default') {
+            delete project.calendarConfig.holidays[dateStr];
+        } else if (statusData.type === 'workday') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Jornada Laborable Habilitada',
+                isWorking: true,
+                isPaid: false
+            };
+        } else if (statusData.type === 'weekend') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Día No Laborable (Sin Costo)',
+                isWorking: false,
+                isPaid: false
+            };
+        } else if (statusData.type === 'holiday_paid') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Feriado Pago / Asueto',
+                isWorking: false,
+                isPaid: true,
+                hoursPerWorker: Number(statusData.hoursPerWorker) || 8,
+                customCost: statusData.customCost !== undefined && statusData.customCost !== null && statusData.customCost !== '' 
+                    ? Number(statusData.customCost) 
+                    : null
+            };
+        } else if (statusData.type === 'holiday_unpaid') {
+            project.calendarConfig.holidays[dateStr] = {
+                name: statusData.name || 'Parada No Laborable (Sin Costo)',
+                isWorking: false,
+                isPaid: false
+            };
+        }
+
+        this.notify();
+        return true;
+    }
+
     // Cálculo exhaustivo de KPIs (HH, Costo, Avance Ponderado, EVM)
     getProjectKPIs() {
         const project = this.getActiveProject();
@@ -359,7 +523,7 @@ class ProjectStore {
                     const h = parseFloat(hh) || 0;
                     taskEstHH += h;
                     const meta = getResourceMeta(resId, catalogs);
-                    totalEstimatedCost += h * (meta.hourlyRate || 30);
+                    totalEstimatedCost += h * (meta.hourlyRate || 25);
                 });
             }
             totalEstimatedHH += taskEstHH;
@@ -372,7 +536,7 @@ class ProjectStore {
                     const h = parseFloat(hh) || 0;
                     taskRealHH += h;
                     const meta = getResourceMeta(resId, catalogs);
-                    totalRealCost += h * (meta.hourlyRate || 30);
+                    totalRealCost += h * (meta.hourlyRate || 25);
                 });
             }
             totalRealHH += taskRealHH;
@@ -468,9 +632,36 @@ class ProjectStore {
         // Conteo de conflictos activos
         const conflicts = this.getConflicts();
 
+        // 3. Costos de Feriados Pagos en el calendario de la obra
+        const startDateStr = project.startDate || '2026-09-01';
+        const timelineDays = project.durationDays || 28;
+        const endDateStr = calculateEndDate(startDateStr, timelineDays);
+        const calendarDates = getDatesRange(startDateStr, endDateStr);
+
+        let totalHolidayCost = 0;
+        let paidHolidaysCount = 0;
+        let weekendDaysCount = 0;
+        let nonWorkingDaysCount = 0;
+
+        calendarDates.forEach(dStr => {
+            const status = this.getDayStatus(dStr, project);
+            if (!status.isWorking) {
+                nonWorkingDaysCount++;
+                if (status.isWeekend) weekendDaysCount++;
+            }
+            if (status.isHoliday && status.isPaid) {
+                paidHolidaysCount++;
+                totalHolidayCost += status.cost || 0;
+            }
+        });
+
+        // Sumar costo de feriados al presupuesto estimado y real
+        const finalEstimatedProjectCost = totalEstimatedProjectCost + totalHolidayCost;
+        const finalRealProjectCost = totalRealProjectCost + totalHolidayCost;
+
         // Monto contractual cotizado (Venta) vs Costo Proyectado
-        const contractBudget = project.contractBudget || Math.round(totalEstimatedProjectCost * 1.28);
-        const projectedGrossMargin = contractBudget - totalRealProjectCost;
+        const contractBudget = project.contractBudget || Math.round(finalEstimatedProjectCost * 1.28);
+        const projectedGrossMargin = contractBudget - finalRealProjectCost;
         const projectedGrossMarginPct = contractBudget > 0 ? Math.round((projectedGrossMargin / contractBudget) * 100) : 0;
 
         return {
@@ -478,9 +669,9 @@ class ProjectStore {
             totalRealHH: Math.round(totalRealHH),
             hhDeviation: Math.round(totalRealHH - totalEstimatedHH),
             globalProgress,
-            totalEstimatedCost: Math.round(totalEstimatedProjectCost),
-            totalRealCost: Math.round(totalRealProjectCost),
-            costDeviation: Math.round(totalRealProjectCost - totalEstimatedProjectCost),
+            totalEstimatedCost: Math.round(finalEstimatedProjectCost),
+            totalRealCost: Math.round(finalRealProjectCost),
+            costDeviation: Math.round(finalRealProjectCost - finalEstimatedProjectCost),
             contractBudget: Math.round(contractBudget),
             projectedGrossMargin: Math.round(projectedGrossMargin),
             projectedGrossMarginPct,
@@ -489,7 +680,12 @@ class ProjectStore {
             spi: parseFloat(spi),
             activeConflicts: conflicts.totalConflictsCount,
             totalTasksCount: tasks.length + (project.backlog ? project.backlog.length : 0),
-            backlogCount: project.backlog ? project.backlog.length : 0
+            backlogCount: project.backlog ? project.backlog.length : 0,
+            // Métricas de calendario y feriados
+            totalHolidayCost: Math.round(totalHolidayCost),
+            paidHolidaysCount,
+            weekendDaysCount,
+            nonWorkingDaysCount
         };
     }
 

@@ -364,29 +364,47 @@ class AppController {
 
         // Banner descriptivo según la pestaña activa
         const bannerEl = document.getElementById('tab-context-banner');
+        const calendarLegendHtml = `
+            <div class="flex items-center gap-3 text-[11px] text-slate-400 bg-slate-950/60 px-3 py-1 rounded-xl border border-slate-800 flex-wrap">
+                <span class="text-slate-500 font-bold uppercase tracking-wider text-[10px]">Calendario:</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Laborable</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-500"></span> Fin Sem</span>
+                <span class="flex items-center gap-1.5 font-bold text-purple-300" title="Haz clic sobre cualquier fecha en la cabecera para configurar feriado o fin de semana"><span class="w-2 h-2 rounded-full bg-purple-500 shadow-xs shadow-purple-500/50"></span> Feriado Pago ($)</span>
+                <span class="text-[10px] text-slate-500 italic hidden lg:inline">(Clic en cabecera de día para configurar)</span>
+            </div>
+        `;
+
         if (bannerEl) {
+            let tabInfoHtml = '';
             if (activeTab === 'estimated') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="calendar" class="w-4 h-4 text-blue-400"></i>
                         <span><strong>Pestaña 1: Estimado (Cronograma Base)</strong> — Calendario contractual oficial y tareas programadas en base a lo cotizado.</span>
                     </div>
                 `;
             } else if (activeTab === 'real') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
                         <span><strong>Pestaña 2: Real (Ejecución en Terreno)</strong> — Monitoreo efectivo de obra. Asienta partes diarios de avance y horas en cada tarea.</span>
                     </div>
                 `;
             } else if (activeTab === 'comparativa') {
-                bannerEl.innerHTML = `
+                tabInfoHtml = `
                     <div class="flex items-center gap-2 text-xs text-slate-300">
                         <i data-lucide="git-compare" class="w-4 h-4 text-amber-400"></i>
                         <span><strong>Pestaña 3: Comparativa / Control</strong> — Superposición de Línea de Base (arriba) vs. Avance Real (abajo). Cálculos automáticos de desviación en días y Horas-Hombre.</span>
                     </div>
                 `;
             }
+
+            bannerEl.innerHTML = `
+                <div class="flex flex-wrap items-center justify-between gap-2.5">
+                    ${tabInfoHtml}
+                    ${calendarLegendHtml}
+                </div>
+            `;
         }
     }
 
@@ -413,7 +431,7 @@ class AppController {
                 btnToggle.classList.add('border-cyan-500/50', 'bg-cyan-950/40', 'text-cyan-300');
                 btnToggle.classList.remove('border-slate-700', 'bg-slate-800', 'text-slate-300');
             } else {
-                btnToggle.innerHTML = `<i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> <span class="hidden sm:inline">Modo:</span> Edición`;
+                btnToggle.innerHTML = `<i data-lucide="shield" class="w-4 h-4 text-slate-400"></i> <span class="hidden sm:inline">Modo:</span> Interno`;
                 btnToggle.classList.remove('border-cyan-500/50', 'bg-cyan-950/40', 'text-cyan-300');
                 btnToggle.classList.add('border-slate-700', 'bg-slate-800', 'text-slate-300');
             }
@@ -481,12 +499,23 @@ class AppController {
         const costRealEl = document.getElementById('kpi-cost-real');
         const contractBudgetEl = document.getElementById('kpi-contract-budget');
         const marginBadgeEl = document.getElementById('kpi-margin-badge');
+        const holidaySubtextEl = document.getElementById('kpi-holiday-cost-subtext');
+        const holidayLabelEl = document.getElementById('kpi-holiday-cost-label');
+
         if (costRealEl) costRealEl.textContent = `$${kpis.totalRealCost.toLocaleString()}`;
         if (contractBudgetEl) contractBudgetEl.textContent = `$${kpis.contractBudget.toLocaleString()}`;
         if (marginBadgeEl) {
             const isPositive = kpis.projectedGrossMargin >= 0;
             marginBadgeEl.textContent = `Margen: ${kpis.projectedGrossMarginPct}% ($${kpis.projectedGrossMargin.toLocaleString()})`;
             marginBadgeEl.className = `text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isPositive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`;
+        }
+        if (holidaySubtextEl && holidayLabelEl) {
+            if (kpis.totalHolidayCost > 0) {
+                holidaySubtextEl.classList.remove('hidden');
+                holidayLabelEl.textContent = `Incluye $${Math.round(kpis.totalHolidayCost).toLocaleString()} en ${kpis.paidHolidaysCount} feriado(s) pago(s)`;
+            } else {
+                holidaySubtextEl.classList.add('hidden');
+            }
         }
 
         // 3B. Tareas Operativas para Modo Supervisión (Sin Costos)

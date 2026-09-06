@@ -521,31 +521,59 @@ export class TimelineRenderer {
             const isToday = dateStr === this.todayStr;
             const hasConflict = conflicts.conflictsByDate && conflicts.conflictsByDate[dateStr] && conflicts.conflictsByDate[dateStr].length > 0;
             const conflictInfo = hasConflict ? conflicts.conflictsByDate[dateStr] : null;
+            const dayStatus = this.store.getDayStatus(dateStr);
+
+            let dayBgClass = 'hover:bg-slate-800/50 cursor-pointer';
+            let dayTextClass = 'text-slate-400';
+            let numBgClass = 'text-slate-200';
+            let tagBadge = '';
+
+            if (dayStatus.isHoliday && dayStatus.isPaid) {
+                dayBgClass = 'timeline-day-holiday-paid cursor-pointer';
+                dayTextClass = 'text-purple-300 font-extrabold';
+                numBgClass = 'bg-purple-600 text-white shadow-sm shadow-purple-500/30';
+                tagBadge = `<span class="px-1 py-0.2 rounded text-[8px] font-black bg-purple-500/30 text-purple-200 border border-purple-400/50 truncate max-w-[90%]" title="${dayStatus.name} - Costo cuadrilla: $${Math.round(dayStatus.cost || 0)}">Feriado $</span>`;
+            } else if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                dayBgClass = 'timeline-day-holiday-unpaid cursor-pointer';
+                dayTextClass = 'text-rose-300 font-bold';
+                numBgClass = 'bg-rose-700 text-white';
+                tagBadge = `<span class="px-1 py-0.2 rounded text-[8px] font-bold bg-rose-500/20 text-rose-200 border border-rose-500/30 truncate max-w-[90%]" title="${dayStatus.name}">Parada</span>`;
+            } else if (dayStatus.isWeekend) {
+                dayBgClass = 'timeline-day-weekend cursor-pointer opacity-80';
+                dayTextClass = 'text-slate-500';
+                numBgClass = 'text-slate-400';
+                tagBadge = `<span class="text-[8px] font-bold text-slate-500 uppercase tracking-tighter">Fin Sem</span>`;
+            } else if (isToday) {
+                dayBgClass = 'bg-amber-500/10 border-amber-500/40 cursor-pointer';
+                dayTextClass = 'text-amber-400 font-bold';
+                numBgClass = 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20';
+            }
 
             headerColsHtml += `
-                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-1.5 border-r border-slate-700/60 transition-colors select-none ${isToday ? 'bg-amber-500/10 border-amber-500/40' : 'hover:bg-slate-800/40'}"
+                <div class="timeline-day-header flex-shrink-0 flex flex-col items-center justify-between py-1.5 border-r border-slate-700/60 transition-colors select-none ${dayBgClass}"
                      style="width: ${this.columnWidth}px;"
-                     data-date="${dateStr}">
+                     data-date="${dateStr}"
+                     title="Día: ${dayStatus.name}. Haz clic para configurar día laborable, fin de semana o feriado pago.">
                     
-                    <span class="${isVeryCompact ? 'text-[8px]' : 'text-[10px]'} uppercase font-bold tracking-wider ${isToday ? 'text-amber-400' : 'text-slate-400'}">
+                    <span class="${isVeryCompact ? 'text-[8px]' : 'text-[10px]'} uppercase font-bold tracking-wider ${dayTextClass}">
                         ${isVeryCompact ? dayName.slice(0, 1) : dayName}
                     </span>
                     
-                    <div class="my-0.5 flex items-center justify-center ${isVeryCompact ? 'w-5 h-5 text-[10px]' : (isCompact ? 'w-6 h-6 text-xs' : 'w-7 h-7 text-xs')} rounded-full font-black ${isToday ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20' : 'text-slate-200'}">
+                    <div class="my-0.5 flex items-center justify-center ${isVeryCompact ? 'w-5 h-5 text-[10px]' : (isCompact ? 'w-6 h-6 text-xs' : 'w-7 h-7 text-xs')} rounded-full font-black ${numBgClass}">
                         ${dayNum}
                     </div>
 
                     ${isVeryCompact ? '' : `<span class="text-[9px] text-slate-400 font-medium truncate">${monthName}</span>`}
 
                     ${hasConflict ? `
-                        <button class="btn-inspect-conflict mt-0.5 px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-0.5 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse"
+                        <button class="btn-inspect-conflict mt-0.5 px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 text-[9px] font-bold flex items-center gap-0.5 hover:bg-red-500 hover:text-white transition-all shadow-sm animate-pulse z-10"
                                 title="Sobreasignación de recursos en esta fecha. Clic para inspeccionar."
                                 data-date="${dateStr}">
                             <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> ${isVeryCompact ? '' : conflictInfo.length}
                         </button>
-                    ` : `
+                    ` : (tagBadge ? tagBadge : `
                         <span class="text-[9px] text-transparent select-none mt-0.5">•</span>
-                    `}
+                    `)}
                 </div>
             `;
         });
@@ -596,6 +624,17 @@ export class TimelineRenderer {
                 e.stopPropagation();
                 const date = btn.dataset.date;
                 if (window.appModals) window.appModals.openConflictInspector(date);
+            });
+        });
+
+        // 5b. Clic en cabecera de día para configurar feriados / días no laborables
+        this.container.querySelectorAll('.timeline-day-header').forEach(hdr => {
+            hdr.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-inspect-conflict')) return;
+                const date = hdr.dataset.date;
+                if (window.appModals && typeof window.appModals.openDayCalendarModal === 'function') {
+                    window.appModals.openDayCalendarModal(date);
+                }
             });
         });
 
@@ -708,11 +747,22 @@ export class TimelineRenderer {
 
                 <!-- Columnas interactivas receptoras de Drag & Drop en el carril -->
                 <div class="absolute inset-y-0 right-0 flex" style="left: ${rowHandleWidth}px;">
-                    ${calendarDates.map(d => `
-                        <div class="timeline-grid-cell border-r border-slate-800/60 h-full transition-colors" 
-                             style="width: ${this.columnWidth}px;" 
-                             data-date="${d}"></div>
-                    `).join('')}
+                    ${calendarDates.map(d => {
+                        const dayStatus = this.store.getDayStatus(d);
+                        let cellClass = '';
+                        if (dayStatus.isHoliday && dayStatus.isPaid) {
+                            cellClass = 'timeline-cell-holiday-paid';
+                        } else if (dayStatus.isHoliday && !dayStatus.isPaid) {
+                            cellClass = 'timeline-cell-holiday-unpaid';
+                        } else if (dayStatus.isWeekend) {
+                            cellClass = 'timeline-cell-weekend';
+                        }
+                        return `
+                            <div class="timeline-grid-cell ${cellClass} border-r border-slate-800/60 h-full transition-colors" 
+                                 style="width: ${this.columnWidth}px;" 
+                                 data-date="${d}"></div>
+                        `;
+                    }).join('')}
                 </div>
 
                 ${isPlaced ? `

@@ -77,6 +77,37 @@
     .timeline-bar-container {
         touch-action: pan-x;
     }
+/* ==========================================================================
+   CALENDARIO LABORAL: FINES DE SEMANA Y FERIADOS CON IMPACTO EN PRESUPUESTO
+   ========================================================================== */
+.timeline-cell-weekend {
+    background-color: rgba(15, 23, 42, 0.45);
+    background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(51, 65, 85, 0.12) 6px, rgba(51, 65, 85, 0.12) 12px);
+}
+
+.timeline-cell-holiday-paid {
+    background-color: rgba(126, 34, 206, 0.12);
+    border-right-color: rgba(168, 85, 247, 0.40) !important;
+    background-image: repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(168, 85, 247, 0.12) 8px, rgba(168, 85, 247, 0.12) 16px);
+}
+
+.timeline-cell-holiday-unpaid {
+    background-color: rgba(244, 63, 94, 0.08);
+    border-right-color: rgba(244, 63, 94, 0.35) !important;
+}
+
+.timeline-day-weekend {
+    background-color: rgba(15, 23, 42, 0.75);
+}
+
+.timeline-day-holiday-paid {
+    background-color: rgba(88, 28, 135, 0.35) !important;
+    border-color: rgba(168, 85, 247, 0.6) !important;
+}
+
+.timeline-day-holiday-unpaid {
+    background-color: rgba(136, 19, 55, 0.3) !important;
+    border-color: rgba(244, 63, 94, 0.5) !important;
 }
 
 /* ==========================================================================
@@ -196,5 +227,17 @@
         break-inside: avoid;
         page-break-inside: avoid;
         background-color: #ffffff !important;
+    }
+
+    /* Resaltado de fines de semana y feriados en PDF impreso */
+    .timeline-cell-weekend {
+        background-color: #f1f5f9 !important;
+        background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(148, 163, 184, 0.25) 5px, rgba(148, 163, 184, 0.25) 10px) !important;
+    }
+
+    .timeline-cell-holiday-paid {
+        background-color: #f5f3ff !important;
+        border-right: 1.5px solid #a855f7 !important;
+        background-image: repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(168, 85, 247, 0.2) 6px, rgba(168, 85, 247, 0.2) 12px) !important;
     }
 }
